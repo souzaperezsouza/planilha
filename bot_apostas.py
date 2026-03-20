@@ -32,6 +32,7 @@ logging.basicConfig(level=logging.WARNING)
 DATA, HORARIO, DESCRICAO, ODD, STAKE, ESPORTE, CASA  = range(7)
 ATUALIZAR_ID, ATUALIZAR_RES                          = range(7, 9)
 EDITAR_ID, EDITAR_CAMPO, EDITAR_VALOR, EDITAR_CASA   = range(9, 13)
+RESULTADOS_DATA = 13
 
 CANCELAR_BTN = "❌ Cancelar"
 
@@ -40,8 +41,8 @@ def teclado_cancelar():
 
 def teclado_menu():
     return ReplyKeyboardMarkup([
-        ["📝 Nova aposta",     "✅ Atualizar resultado"],
-        ["⏳ Ver pendentes",   "📊 Resumo"],
+        ["📝 Nova aposta",     "⏳ Ver pendentes"],
+        ["📊 Resumo",          "📈 Resultados"],
         ["📋 Últimas apostas", "🏦 Por casa"],
         ["✏️ Editar aposta",  "📤 Exportar CSV"],
     ], resize_keyboard=True)
@@ -145,9 +146,9 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     txt = update.message.text
     if txt == "📝 Nova aposta":        return await nova_aposta_inicio(update, ctx)
-    if txt == "✅ Atualizar resultado": return await atualizar_inicio(update, ctx)
     if txt == "⏳ Ver pendentes":      return await ver_pendentes(update, ctx)
     if txt == "📊 Resumo":             return await resumo(update, ctx)
+    if txt == "📈 Resultados":         return await resultados(update, ctx)
     if txt == "📋 Últimas apostas":    return await ultimas(update, ctx)
     if txt == "🏦 Por casa":           return await por_casa(update, ctx)
     if txt == "✏️ Editar aposta":      return await editar_inicio(update, ctx)
@@ -420,7 +421,7 @@ async def por_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(linhas), parse_mode="Markdown")
 
 # ── EDITAR APOSTA ─────────────────────────────────────────────────────────────
-CAMPOS_EDITAVEIS = ["data", "horario", "descricao", "odd", "stake", "esporte", "casa"]
+CAMPOS_EDITAVEIS = ["data", "horario", "descricao", "odd", "stake", "esporte", "casa", "resultado"]
 CAMPOS_LABEL     = {"data":"📅 Data","horario":"⏰ Horário","descricao":"🏷 Descrição",
                     "odd":"🔢 Odd","stake":"💰 Stake","esporte":"🏅 Esporte","casa":"🏦 Casa"}
 
@@ -487,6 +488,12 @@ async def editar_receber_campo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardMarkup(teclado, resize_keyboard=True, one_time_keyboard=True),
             parse_mode="Markdown")
         return EDITAR_CASA
+    if campo == "resultado":
+        teclado = [["✅ Ganhou", "❌ Perdeu"], ["↩️ Void", "⏳ Pendente"], [CANCELAR_BTN]]
+        await update.message.reply_text("📊 *Qual o resultado?*",
+            reply_markup=ReplyKeyboardMarkup(teclado, resize_keyboard=True, one_time_keyboard=True),
+            parse_mode="Markdown")
+        return EDITAR_CASA
     dicas = {"data":"Nova data (DD/MM/AAAA) ou 0 para hoje:","horario":"Novo horário (HH:MM) ou 0 para agora:",
              "descricao":"Nova descrição:","odd":"Nova odd:","stake":"Novo stake (R$):"}
     await update.message.reply_text(dicas[campo], reply_markup=teclado_cancelar())
@@ -525,6 +532,10 @@ async def editar_receber_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Digite o nome:", reply_markup=teclado_cancelar())
         ctx.user_data["editar_campo"] = "casa_custom"
         return EDITAR_VALOR
+    # Mapear botões de resultado
+    mapa_res = {"✅ Ganhou": "ganhou", "❌ Perdeu": "perdeu", "↩️ Void": "void", "⏳ Pendente": "pendente"}
+    if ctx.user_data.get("editar_campo") == "resultado" and raw in mapa_res:
+        return await aplicar_edicao(update, ctx, ctx.user_data["editar_id"], "resultado", mapa_res[raw])
     return await aplicar_edicao(update, ctx, ctx.user_data["editar_id"], ctx.user_data["editar_campo"], raw)
 
 async def aplicar_edicao(update, ctx, id_alvo, campo, novo_valor):
@@ -538,6 +549,92 @@ async def aplicar_edicao(update, ctx, id_alvo, campo, novo_valor):
         exibe = f"{float(novo_valor):.2f}"
     await update.message.reply_text(f"✅ *Aposta #{id_alvo} atualizada!*\n{label} → *{exibe}*", parse_mode="Markdown")
     return await voltar_menu(update, ctx)
+
+
+# ── RESULTADOS ────────────────────────────────────────────────────────────────
+def calcular_lucro_lista(lista):
+    return sum(
+        float(a["stake"]) * (float(a["odd"]) - 1) if a["resultado"] == "ganhou"
+        else -float(a["stake"])
+        for a in lista
+    )
+
+async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    apostas = carregar()
+    res     = [a for a in apostas if a["resultado"] in ("ganhou", "perdeu")]
+    if not res:
+        await update.message.reply_text("Nenhuma aposta resolvida ainda.")
+        return
+
+    lucro_total = calcular_lucro_lista(res)
+    stake_total = sum(float(a["stake"]) for a in res)
+    vitorias    = sum(1 for a in res if a["resultado"] == "ganhou")
+    roi         = lucro_total / stake_total if stake_total else 0
+    progressao  = lucro_total / BANCA_INICIAL
+    sinal_l     = "+" if lucro_total >= 0 else ""
+    emoji_lucro = "📈" if lucro_total >= 0 else "📉"
+
+    await update.message.reply_text(
+        f"{emoji_lucro} *Resultados Gerais*\n\n"
+        f"💰 Lucro Total: *{sinal_l}R$ {lucro_total:.2f}*\n"
+        f"📊 ROI: *{roi:+.1%}*\n"
+        f"💹 Progressão: *{progressao:+.2%}*\n"
+        f"🏆 {vitorias}V / {len(res)-vitorias}D\n\n"
+        f"📅 Digite uma data (DD/MM ou DD/MM/AAAA) para ver o resultado daquele dia:\n"
+        f"Ou *0* para voltar ao menu.",
+        reply_markup=teclado_cancelar(),
+        parse_mode="Markdown"
+    )
+    return RESULTADOS_DATA
+
+async def resultados_receber_data(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    raw = update.message.text.strip()
+    if raw == CANCELAR_BTN or raw == "0":
+        return await voltar_menu(update, ctx)
+
+    # Tenta parsear a data
+    data_obj = None
+    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%d/%m"):
+        try:
+            if fmt == "%d/%m":
+                ano = datetime.now().year
+                data_obj = datetime.strptime(f"{raw}/{ano}", "%d/%m/%Y")
+            else:
+                data_obj = datetime.strptime(raw, fmt)
+            break
+        except ValueError:
+            pass
+
+    if not data_obj:
+        await update.message.reply_text("❌ Data inválida. Use DD/MM ou DD/MM/AAAA:")
+        return RESULTADOS_DATA
+
+    data_str = data_obj.strftime("%Y-%m-%d")
+    apostas  = carregar()
+    do_dia   = [a for a in apostas if str(a["data"])[:10] == data_str and a["resultado"] in ("ganhou","perdeu")]
+
+    if not do_dia:
+        await update.message.reply_text(
+            f"Nenhuma aposta resolvida em {data_obj.strftime('%d/%m/%Y')}.",
+        )
+        return RESULTADOS_DATA
+
+    lucro_dia = calcular_lucro_lista(do_dia)
+    g = sum(1 for a in do_dia if a["resultado"] == "ganhou")
+    p = sum(1 for a in do_dia if a["resultado"] == "perdeu")
+    emoji = "🟢" if lucro_dia >= 0 else "🔴"
+    sinal = "+" if lucro_dia >= 0 else ""
+
+    emojis = {"ganhou": "✅", "perdeu": "❌"}
+    linhas = [f"{emoji} *{data_obj.strftime('%d/%m/%Y')}* — {g}V {p}D — {sinal}R$ {lucro_dia:.2f}\n"]
+    for a in do_dia:
+        e = emojis.get(a["resultado"], "")
+        linhas.append(f"{e} odd {a['odd']} | R${float(a['stake']):.0f} → {sinal if a['resultado']=='ganhou' else '-'}R${abs(float(a['stake'])*(float(a['odd'])-1) if a['resultado']=='ganhou' else float(a['stake'])):.2f}\n_{a['descricao']}_\n")
+
+    linhas.append("\nDigite outra data ou *0* para voltar:")
+    await update.message.reply_text("\n".join(linhas), parse_mode="Markdown")
+    return RESULTADOS_DATA
+
 
 # ── EXPORTAR CSV ──────────────────────────────────────────────────────────────
 async def exportar_csv(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -600,6 +697,17 @@ def main():
         fallbacks=[CommandHandler("cancelar", cancelar),
                    MessageHandler(filters.Regex(f"^{CANCELAR_BTN}$"), cancelar)],
     )
+    conv_resultados = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^📈 Resultados$"), resultados)],
+        states={
+            RESULTADOS_DATA: [MessageHandler(filters.TEXT & ~filters.COMMAND, resultados_receber_data)],
+        },
+        fallbacks=[
+            CommandHandler("cancelar", cancelar),
+            MessageHandler(filters.Regex(f"^{CANCELAR_BTN}$"), cancelar),
+        ],
+    )
+
     conv_editar = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^✏️ Editar aposta$"), editar_inicio)],
         states={
@@ -616,6 +724,7 @@ def main():
     app.add_handler(CommandHandler("exportar", exportar_csv))
     app.add_handler(conv_nova)
     app.add_handler(conv_atualizar)
+    app.add_handler(conv_resultados)
     app.add_handler(conv_editar)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_botao))
 
