@@ -42,9 +42,9 @@ def teclado_cancelar():
 def teclado_menu():
     return ReplyKeyboardMarkup([
         ["📝 Nova aposta",     "⏳ Ver pendentes"],
-        ["📊 Resumo",          "📈 Resultados"],
-        ["📋 Últimas apostas", "🏦 Por casa"],
-        ["✏️ Editar aposta",  "📤 Exportar CSV"],
+        ["📈 Resultados",      "📋 Últimas apostas"],
+        ["🏦 Por casa",        "✏️ Editar aposta"],
+        ["📤 Exportar CSV"],
     ], resize_keyboard=True)
 
 # ── BANCO DE DADOS ────────────────────────────────────────────────────────────
@@ -147,7 +147,6 @@ async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     txt = update.message.text
     if txt == "📝 Nova aposta":        return await nova_aposta_inicio(update, ctx)
     if txt == "⏳ Ver pendentes":      return await ver_pendentes(update, ctx)
-    if txt == "📊 Resumo":             return await resumo(update, ctx)
     if txt == "📈 Resultados":         return await resultados(update, ctx)
     if txt == "📋 Últimas apostas":    return await ultimas(update, ctx)
     if txt == "🏦 Por casa":           return await por_casa(update, ctx)
@@ -574,23 +573,56 @@ async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     sinal_l     = "+" if lucro_total >= 0 else ""
     emoji_lucro = "📈" if lucro_total >= 0 else "📉"
 
+    teclado_res = ReplyKeyboardMarkup([["🏦 Por Casa"], [CANCELAR_BTN]], resize_keyboard=True)
     await update.message.reply_text(
         f"{emoji_lucro} *Resultados Gerais*\n\n"
         f"💰 Lucro Total: *{sinal_l}R$ {lucro_total:.2f}*\n"
         f"📊 ROI: *{roi:+.1%}*\n"
         f"💹 Progressão: *{progressao:+.2%}*\n"
         f"🏆 {vitorias}V / {len(res)-vitorias}D\n\n"
-        f"📅 Digite uma data (DD/MM ou DD/MM/AAAA) para ver o resultado daquele dia:\n"
-        f"Ou *0* para voltar ao menu.",
-        reply_markup=teclado_cancelar(),
+        f"📅 Digite uma data (DD/MM) para ver aquele dia\n"
+        f"🏦 Ou clique em *Por Casa* para ver por casa\n"
+        f"*0* para voltar.",
+        reply_markup=teclado_res,
         parse_mode="Markdown"
     )
+    return RESULTADOS_DATA
+
+async def resultados_por_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    apostas = carregar()
+    res     = [a for a in apostas if a["resultado"] in ("ganhou", "perdeu")]
+    if not res:
+        await update.message.reply_text("Nenhuma aposta resolvida ainda.")
+        return RESULTADOS_DATA
+    casas = {}
+    for a in res:
+        casa = a.get("casa") or "Sem casa"
+        if casa not in casas:
+            casas[casa] = {"ap":0,"g":0,"stake":0.0,"lucro":0.0}
+        c = casas[casa]
+        c["ap"] += 1; c["stake"] += float(a["stake"])
+        if a["resultado"] == "ganhou":
+            c["g"] += 1; c["lucro"] += float(a["stake"]) * (float(a["odd"])-1)
+        else:
+            c["lucro"] -= float(a["stake"])
+    ordenadas = sorted(casas.items(), key=lambda x: x[1]["lucro"], reverse=True)
+    linhas = ["🏦 *Por Casa:*\n"]
+    for nome, c in ordenadas:
+        roi   = c["lucro"]/c["stake"] if c["stake"] else 0
+        emoji = "🟢" if c["lucro"] >= 0 else "🔴"
+        sinal = "+" if c["lucro"] >= 0 else ""
+        linhas.append(f"{emoji} *{nome}*\n  {c['ap']} ap | {c['g']}V/{c['ap']-c['g']}D | {sinal}R$ {c['lucro']:.2f} | ROI: {roi:+.1%}\n")
+    linhas.append("\nDigite uma data (DD/MM) ou *0* para voltar:")
+    teclado_res = ReplyKeyboardMarkup([["🏦 Por Casa"],[CANCELAR_BTN]], resize_keyboard=True)
+    await update.message.reply_text("\n".join(linhas), reply_markup=teclado_res, parse_mode="Markdown")
     return RESULTADOS_DATA
 
 async def resultados_receber_data(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     raw = update.message.text.strip()
     if raw == CANCELAR_BTN or raw == "0":
         return await voltar_menu(update, ctx)
+    if raw == "🏦 Por Casa":
+        return await resultados_por_casa(update, ctx)
 
     # Tenta parsear a data
     data_obj = None
@@ -631,8 +663,9 @@ async def resultados_receber_data(update: Update, ctx: ContextTypes.DEFAULT_TYPE
         e = emojis.get(a["resultado"], "")
         linhas.append(f"{e} odd {a['odd']} | R${float(a['stake']):.0f} → {sinal if a['resultado']=='ganhou' else '-'}R${abs(float(a['stake'])*(float(a['odd'])-1) if a['resultado']=='ganhou' else float(a['stake'])):.2f}\n_{a['descricao']}_\n")
 
-    linhas.append("\nDigite outra data ou *0* para voltar:")
-    await update.message.reply_text("\n".join(linhas), parse_mode="Markdown")
+    linhas.append("\nDigite outra data, *Por Casa* ou *0* para voltar:")
+    teclado_res = ReplyKeyboardMarkup([["🏦 Por Casa"],[CANCELAR_BTN]], resize_keyboard=True)
+    await update.message.reply_text("\n".join(linhas), reply_markup=teclado_res, parse_mode="Markdown")
     return RESULTADOS_DATA
 
 
