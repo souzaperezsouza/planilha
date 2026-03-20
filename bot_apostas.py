@@ -1,6 +1,8 @@
 import csv
 import os
 import logging
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InputFile
 from telegram.ext import (
@@ -632,6 +634,48 @@ async def cancelar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Cancelado.", reply_markup=teclado_menu())
     return ConversationHandler.END
 
+
+# ── SERVIDOR HTTP (serve o CSV via URL) ──────────────────────────────────────
+class CSVHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/apostas.csv":
+            if os.path.exists(CSV_FILE):
+                with open(CSV_FILE, "rb") as f:
+                    data = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/csv; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            else:
+                self.send_response(404)
+                self.end_headers()
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        pass  # silencia logs do servidor
+
+def iniciar_servidor():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), CSVHandler)
+    server.serve_forever()
+
+# ── SERVIDOR DE KEEP-ALIVE (Render exige porta aberta) ───────────────────────
+class PingHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def log_message(self, *args):
+        pass  # silencia logs do servidor
+
+def iniciar_servidor():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), PingHandler)
+    server.serve_forever()
+
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 def main():
     app = Application.builder().token(TOKEN).build()
@@ -686,6 +730,10 @@ def main():
     app.add_handler(conv_editar)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_botao))
 
+    t = threading.Thread(target=iniciar_servidor, daemon=True)
+    t.start()
+    t = threading.Thread(target=iniciar_servidor, daemon=True)
+    t.start()
     print("🤖 Bot rodando! Abra o Telegram e mande /start")
     app.run_polling()
 

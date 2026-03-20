@@ -1,1 +1,1 @@
-worker: python bot_apostas.py
+web: python bot_apostas.py
