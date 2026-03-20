@@ -744,7 +744,9 @@ def main():
         fallbacks=[
             CommandHandler("cancelar", cancelar),
             MessageHandler(filters.Regex(f"^{CANCELAR_BTN}$"), cancelar),
+            MessageHandler(filters.Regex("^(📝 Nova aposta|⏳ Ver pendentes|✏️ Editar aposta|📤 Exportar CSV)$"), cancelar),
         ],
+        allow_reentry=True,
     )
 
     conv_editar = ConversationHandler(
@@ -763,8 +765,8 @@ def main():
     app.add_handler(CommandHandler("exportar", exportar_csv))
     app.add_handler(conv_nova)
     app.add_handler(conv_atualizar)
-    app.add_handler(conv_resultados)
     app.add_handler(conv_editar)
+    app.add_handler(conv_resultados)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_botao))
 
     threading.Thread(target=iniciar_servidor, daemon=True).start()
