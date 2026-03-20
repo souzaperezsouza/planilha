@@ -137,6 +137,7 @@ def exportar_csv_string():
 
 # ── /start e menu ─────────────────────────────────────────────────────────────
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🔄 Atualizando menu...", reply_markup=ReplyKeyboardRemove())
     await update.message.reply_text(
         "👋 *Gestor de Apostas*\n\nEscolha uma opção:",
         reply_markup=teclado_menu(),
