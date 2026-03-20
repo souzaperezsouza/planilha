@@ -619,7 +619,12 @@ async def resultados_por_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def resultados_receber_data(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     raw = update.message.text.strip()
-    if raw == CANCELAR_BTN or raw == "0":
+    # Qualquer botão do menu principal sai do fluxo
+    botoes_menu = {"📝 Nova aposta","⏳ Ver pendentes","📈 Resultados","✏️ Editar aposta","📤 Exportar CSV",
+                   "📊 Resumo","📋 Últimas apostas","🏦 Por casa","✅ Atualizar resultado"}
+    if raw == CANCELAR_BTN or raw == "0" or raw in botoes_menu:
+        if raw in botoes_menu and raw != "📈 Resultados":
+            return await menu_botao(update, ctx)
         return await voltar_menu(update, ctx)
     if raw == "🏦 Por Casa":
         return await resultados_por_casa(update, ctx)
