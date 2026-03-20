@@ -32,7 +32,6 @@ logging.basicConfig(level=logging.WARNING)
 DATA, HORARIO, DESCRICAO, ODD, STAKE, ESPORTE, CASA  = range(7)
 ATUALIZAR_ID, ATUALIZAR_RES                          = range(7, 9)
 EDITAR_ID, EDITAR_CAMPO, EDITAR_VALOR, EDITAR_CASA   = range(9, 13)
-RESULTADOS_DATA = 13
 
 CANCELAR_BTN = "❌ Cancelar"
 
@@ -149,6 +148,9 @@ async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if txt == "📝 Nova aposta":        return await nova_aposta_inicio(update, ctx)
     if txt == "⏳ Ver pendentes":      return await ver_pendentes(update, ctx)
     if txt == "📈 Resultados":         return await resultados(update, ctx)
+    if txt == "📊 Resumo":             return await resultados(update, ctx)
+    if txt == "📋 Últimas apostas":    return await ultimas(update, ctx)
+    if txt == "🏦 Por casa":           return await cmd_porcasa(update, ctx)
     if txt == "📋 Últimas apostas":    return await ultimas(update, ctx)
     if txt == "🏦 Por casa":           return await por_casa(update, ctx)
     if txt == "✏️ Editar aposta":      return await editar_inicio(update, ctx)
@@ -565,7 +567,6 @@ async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not res:
         await update.message.reply_text("Nenhuma aposta resolvida ainda.")
         return
-
     lucro_total = calcular_lucro_lista(res)
     stake_total = sum(float(a["stake"]) for a in res)
     vitorias    = sum(1 for a in res if a["resultado"] == "ganhou")
@@ -573,28 +574,62 @@ async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     progressao  = lucro_total / BANCA_INICIAL
     sinal_l     = "+" if lucro_total >= 0 else ""
     emoji_lucro = "📈" if lucro_total >= 0 else "📉"
-
-    teclado_res = ReplyKeyboardMarkup([["🏦 Por Casa"], [CANCELAR_BTN]], resize_keyboard=True)
     await update.message.reply_text(
         f"{emoji_lucro} *Resultados Gerais*\n\n"
         f"💰 Lucro Total: *{sinal_l}R$ {lucro_total:.2f}*\n"
         f"📊 ROI: *{roi:+.1%}*\n"
         f"💹 Progressão: *{progressao:+.2%}*\n"
         f"🏆 {vitorias}V / {len(res)-vitorias}D\n\n"
-        f"📅 Digite uma data (DD/MM) para ver aquele dia\n"
-        f"🏦 Ou clique em *Por Casa* para ver por casa\n"
-        f"*0* para voltar.",
-        reply_markup=teclado_res,
+        f"Para ver um dia específico: /dia DD\_MM\n"
+        f"Para ver por casa: /porcasa",
+        reply_markup=teclado_menu(),
         parse_mode="Markdown"
     )
-    return RESULTADOS_DATA
 
-async def resultados_por_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_dia(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not ctx.args:
+        await update.message.reply_text("Use: /dia DD\_MM (ex: /dia 19\_03)", parse_mode="Markdown")
+        return
+    raw = ctx.args[0].replace("_", "/")
+    data_obj = None
+    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%d/%m"):
+        try:
+            if fmt == "%d/%m":
+                data_obj = datetime.strptime(f"{raw}/{datetime.now().year}", "%d/%m/%Y")
+            else:
+                data_obj = datetime.strptime(raw, fmt)
+            break
+        except ValueError:
+            pass
+    if not data_obj:
+        await update.message.reply_text("Data inválida. Use /dia DD\_MM (ex: /dia 19\_03)", parse_mode="Markdown")
+        return
+    data_str = data_obj.strftime("%Y-%m-%d")
+    apostas  = carregar()
+    do_dia   = [a for a in apostas if str(a["data"])[:10] == data_str and a["resultado"] in ("ganhou","perdeu")]
+    if not do_dia:
+        await update.message.reply_text(f"Nenhuma aposta resolvida em {data_obj.strftime('%d/%m/%Y')}.")
+        return
+    lucro_dia = calcular_lucro_lista(do_dia)
+    g = sum(1 for a in do_dia if a["resultado"] == "ganhou")
+    p = sum(1 for a in do_dia if a["resultado"] == "perdeu")
+    emoji = "🟢" if lucro_dia >= 0 else "🔴"
+    sinal = "+" if lucro_dia >= 0 else ""
+    emojis = {"ganhou": "✅", "perdeu": "❌"}
+    linhas = [f"{emoji} *{data_obj.strftime('%d/%m/%Y')}* — {g}V {p}D — {sinal}R$ {lucro_dia:.2f}\n"]
+    for a in do_dia:
+        e  = emojis.get(a["resultado"], "")
+        l  = float(a["stake"]) * (float(a["odd"])-1) if a["resultado"]=="ganhou" else -float(a["stake"])
+        sl = "+" if l >= 0 else ""
+        linhas.append(f"{e} odd {a['odd']} | R${float(a['stake']):.0f} → *{sl}R${l:.2f}*\n_{a['descricao']}_\n")
+    await update.message.reply_text("\n".join(linhas), parse_mode="Markdown")
+
+async def cmd_porcasa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     apostas = carregar()
     res     = [a for a in apostas if a["resultado"] in ("ganhou", "perdeu")]
     if not res:
         await update.message.reply_text("Nenhuma aposta resolvida ainda.")
-        return RESULTADOS_DATA
+        return
     casas = {}
     for a in res:
         casa = a.get("casa") or "Sem casa"
@@ -613,67 +648,7 @@ async def resultados_por_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         emoji = "🟢" if c["lucro"] >= 0 else "🔴"
         sinal = "+" if c["lucro"] >= 0 else ""
         linhas.append(f"{emoji} *{nome}*\n  {c['ap']} ap | {c['g']}V/{c['ap']-c['g']}D | {sinal}R$ {c['lucro']:.2f} | ROI: {roi:+.1%}\n")
-    linhas.append("\nDigite uma data (DD/MM) ou *0* para voltar:")
-    teclado_res = ReplyKeyboardMarkup([["🏦 Por Casa"],[CANCELAR_BTN]], resize_keyboard=True)
-    await update.message.reply_text("\n".join(linhas), reply_markup=teclado_res, parse_mode="Markdown")
-    return RESULTADOS_DATA
-
-async def resultados_receber_data(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    raw = update.message.text.strip()
-    # Qualquer botão do menu principal sai do fluxo
-    botoes_menu = {"📝 Nova aposta","⏳ Ver pendentes","📈 Resultados","✏️ Editar aposta","📤 Exportar CSV",
-                   "📊 Resumo","📋 Últimas apostas","🏦 Por casa","✅ Atualizar resultado"}
-    if raw == CANCELAR_BTN or raw == "0" or raw in botoes_menu:
-        if raw in botoes_menu and raw != "📈 Resultados":
-            return await menu_botao(update, ctx)
-        return await voltar_menu(update, ctx)
-    if raw == "🏦 Por Casa":
-        return await resultados_por_casa(update, ctx)
-
-    # Tenta parsear a data
-    data_obj = None
-    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%d/%m"):
-        try:
-            if fmt == "%d/%m":
-                ano = datetime.now().year
-                data_obj = datetime.strptime(f"{raw}/{ano}", "%d/%m/%Y")
-            else:
-                data_obj = datetime.strptime(raw, fmt)
-            break
-        except ValueError:
-            pass
-
-    if not data_obj:
-        await update.message.reply_text("❌ Data inválida. Use DD/MM ou DD/MM/AAAA:")
-        return RESULTADOS_DATA
-
-    data_str = data_obj.strftime("%Y-%m-%d")
-    apostas  = carregar()
-    do_dia   = [a for a in apostas if str(a["data"])[:10] == data_str and a["resultado"] in ("ganhou","perdeu")]
-
-    if not do_dia:
-        await update.message.reply_text(
-            f"Nenhuma aposta resolvida em {data_obj.strftime('%d/%m/%Y')}.",
-        )
-        return RESULTADOS_DATA
-
-    lucro_dia = calcular_lucro_lista(do_dia)
-    g = sum(1 for a in do_dia if a["resultado"] == "ganhou")
-    p = sum(1 for a in do_dia if a["resultado"] == "perdeu")
-    emoji = "🟢" if lucro_dia >= 0 else "🔴"
-    sinal = "+" if lucro_dia >= 0 else ""
-
-    emojis = {"ganhou": "✅", "perdeu": "❌"}
-    linhas = [f"{emoji} *{data_obj.strftime('%d/%m/%Y')}* — {g}V {p}D — {sinal}R$ {lucro_dia:.2f}\n"]
-    for a in do_dia:
-        e = emojis.get(a["resultado"], "")
-        linhas.append(f"{e} odd {a['odd']} | R${float(a['stake']):.0f} → {sinal if a['resultado']=='ganhou' else '-'}R${abs(float(a['stake'])*(float(a['odd'])-1) if a['resultado']=='ganhou' else float(a['stake'])):.2f}\n_{a['descricao']}_\n")
-
-    linhas.append("\nDigite outra data, *Por Casa* ou *0* para voltar:")
-    teclado_res = ReplyKeyboardMarkup([["🏦 Por Casa"],[CANCELAR_BTN]], resize_keyboard=True)
-    await update.message.reply_text("\n".join(linhas), reply_markup=teclado_res, parse_mode="Markdown")
-    return RESULTADOS_DATA
-
+    await update.message.reply_text("\n".join(linhas), parse_mode="Markdown")
 
 # ── EXPORTAR CSV ──────────────────────────────────────────────────────────────
 async def exportar_csv(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -736,19 +711,6 @@ def main():
         fallbacks=[CommandHandler("cancelar", cancelar),
                    MessageHandler(filters.Regex(f"^{CANCELAR_BTN}$"), cancelar)],
     )
-    conv_resultados = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^📈 Resultados$"), resultados)],
-        states={
-            RESULTADOS_DATA: [MessageHandler(filters.TEXT & ~filters.COMMAND, resultados_receber_data)],
-        },
-        fallbacks=[
-            CommandHandler("cancelar", cancelar),
-            MessageHandler(filters.Regex(f"^{CANCELAR_BTN}$"), cancelar),
-            MessageHandler(filters.Regex("^(📝 Nova aposta|⏳ Ver pendentes|✏️ Editar aposta|📤 Exportar CSV)$"), cancelar),
-        ],
-        allow_reentry=True,
-    )
-
     conv_editar = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^✏️ Editar aposta$"), editar_inicio)],
         states={
@@ -763,10 +725,11 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("exportar", exportar_csv))
+    app.add_handler(CommandHandler("dia", cmd_dia))
+    app.add_handler(CommandHandler("porcasa", cmd_porcasa))
     app.add_handler(conv_nova)
     app.add_handler(conv_atualizar)
     app.add_handler(conv_editar)
-    app.add_handler(conv_resultados)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_botao))
 
     threading.Thread(target=iniciar_servidor, daemon=True).start()
