@@ -244,7 +244,7 @@ async def receber_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ctx.user_data["aguardando_casa_custom"] = True
         return CASA
     ctx.user_data.pop("aguardando_casa_custom", False)
-    ctx.user_data["casa"] = casa
+    ctx.user_data["casa"] = casa.strip().title() if casa not in CASAS else casa
 
     new_id = inserir({
         "data": ctx.user_data["data"], "horario": ctx.user_data.get("horario",""),
@@ -364,11 +364,11 @@ async def resultados_dia(update: Update, ctx: ContextTypes.DEFAULT_TYPE, raw: st
     return True
 
 # ── EDITAR APOSTA ─────────────────────────────────────────────────────────────
-CAMPOS_EDITAVEIS = ["data","horario","descricao","odd","stake","esporte","casa","resultado"]
+CAMPOS_EDITAVEIS = ["data","horario","descricao","odd","stake","esporte","casa","resultado","cashout"]
 CAMPOS_LABEL     = {
     "data":"📅 Data","horario":"⏰ Horário","descricao":"🏷 Descrição",
     "odd":"🔢 Odd","stake":"💰 Stake","esporte":"🏅 Esporte",
-    "casa":"🏦 Casa","resultado":"📊 Resultado"
+    "casa":"🏦 Casa","resultado":"📊 Resultado","cashout":"💸 Cashout"
 }
 
 async def editar_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -439,6 +439,13 @@ async def editar_receber_campo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardMarkup(teclado, resize_keyboard=True, one_time_keyboard=True),
             parse_mode="Markdown")
         return EDITAR_CASA
+    if campo == "cashout":
+        await update.message.reply_text(
+            "💸 *Cashout*\nDigite o valor que voce *recebeu* de volta (R$):\n"
+            "Ex: apostou R$50, fez cashout por R$30 -> digite *30*\n"
+            "Se perdeu tudo -> digite *0*",
+            reply_markup=teclado_cancelar(), parse_mode="Markdown")
+        return EDITAR_VALOR
     dicas = {"data":"Nova data (DD/MM/AAAA) ou 0 para hoje:","horario":"Novo horário (HH:MM) ou 0 para agora:",
              "descricao":"Nova descrição:","odd":"Nova odd:","stake":"Novo stake (R$):"}
     await update.message.reply_text(dicas[campo], reply_markup=teclado_cancelar())
@@ -461,11 +468,26 @@ async def editar_receber_valor(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 return EDITAR_VALOR
     elif campo == "horario":
         novo_valor = datetime.now().strftime("%H:%M") if raw == "0" else raw
-    elif campo in ("odd","stake"):
+    elif campo in ("odd","stake","cashout"):
         try: novo_valor = float(raw.replace(",","."))
         except ValueError:
             await update.message.reply_text("❌ Digite um número:")
             return EDITAR_VALOR
+        if campo == "cashout":
+            aposta   = buscar_por_id(id_alvo)
+            stake    = float(aposta["stake"])
+            recebido = novo_valor
+            lucro_co = recebido - stake
+            atualizar_campo(id_alvo, "resultado", "void")
+            sinal    = "+" if lucro_co >= 0 else ""
+            emoji_co = "📈" if lucro_co >= 0 else "📉"
+            await update.message.reply_text(
+                f"💸 *Cashout registrado!*\n\n"
+                f"💰 Apostado: R$ {stake:.2f}\n"
+                f"💸 Recebido: R$ {recebido:.2f}\n"
+                f"{emoji_co} Resultado: *{sinal}R$ {lucro_co:.2f}*",
+                parse_mode="Markdown")
+            return await voltar_menu(update, ctx)
     else:
         novo_valor = raw
     return await aplicar_edicao(update, ctx, id_alvo, campo, novo_valor)
@@ -487,6 +509,8 @@ async def editar_receber_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def aplicar_edicao(update, ctx, id_alvo, campo, novo_valor):
     campo_real = campo.replace("_custom","")
+    if campo_real == "casa" and isinstance(novo_valor, str) and novo_valor not in CASAS:
+        novo_valor = novo_valor.strip().title()
     atualizar_campo(id_alvo, campo_real, novo_valor)
     label = CAMPOS_LABEL.get(campo_real, campo_real)
     exibe = novo_valor
