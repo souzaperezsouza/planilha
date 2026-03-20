@@ -1,7 +1,8 @@
-import csv
 import os
 import logging
 import threading
+import psycopg2
+import psycopg2.extras
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InputFile
@@ -11,19 +12,18 @@ from telegram.ext import (
 )
 
 TOKEN         = "8790751046:AAG-AsvU3V-K5j4U8IOUQrpT6NXX8K3FcjU"
-CSV_FILE      = "apostas.csv"
-CAMPOS        = ["id", "data", "horario", "descricao", "odd", "stake", "resultado", "casa", "esporte"]
+DATABASE_URL  = os.environ.get("DATABASE_URL", "postgresql://apostas_db_br3e_user:9Q8kF2084mtEmOESc09jc22ZR7nS5FLz@dpg-d6ub6lfafjfc7380et2g-a/apostas_db_br3e")
 BANCA_INICIAL = 5000
-
-ESPORTES = [
-    "⚽ Futebol", "🏀 Basquete", "🎾 Tênis", "🏒 Hóquei",
-    "🏈 Futebol Americano", "⚾ Beisebol", "🥊 MMA/Boxe", "🏐 Vôlei", "Outro"
-]
 
 CASAS = [
     "Bet365", "Betano", "SportingBet", "Novibet", "Vaidebet",
     "Betfast", "BETesporte", "Betao", "Betnacional", "BetFair",
     "Stake", "Pagol", "Vupi", "Outra"
+]
+
+ESPORTES = [
+    "⚽ Futebol", "🏀 Basquete", "🎾 Tênis", "🏒 Hóquei",
+    "🏈 Futebol Americano", "⚾ Beisebol", "🥊 MMA/Boxe", "🏐 Vôlei", "Outro"
 ]
 
 logging.basicConfig(level=logging.WARNING)
@@ -46,31 +46,69 @@ def teclado_menu():
         ["✏️ Editar aposta",  "📤 Exportar CSV"],
     ], resize_keyboard=True)
 
-# ── CSV ───────────────────────────────────────────────────────────────────────
+# ── BANCO DE DADOS ────────────────────────────────────────────────────────────
+def conectar():
+    return psycopg2.connect(DATABASE_URL)
+
+def inicializar_db():
+    with conectar() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS apostas (
+                    id        SERIAL PRIMARY KEY,
+                    data      DATE NOT NULL,
+                    horario   VARCHAR(5),
+                    descricao TEXT NOT NULL,
+                    odd       NUMERIC(8,3) NOT NULL,
+                    stake     NUMERIC(10,2) NOT NULL,
+                    resultado VARCHAR(10) DEFAULT 'pendente',
+                    casa      VARCHAR(50),
+                    esporte   VARCHAR(50)
+                )
+            """)
+        conn.commit()
+
 def carregar():
-    if not os.path.exists(CSV_FILE):
-        return []
-    with open(CSV_FILE, newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
-        for r in rows:
-            if "casa"    not in r: r["casa"]    = ""
-            if "horario" not in r: r["horario"] = ""
-            if "esporte" not in r: r["esporte"] = ""
-        return rows
+    with conectar() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM apostas ORDER BY data ASC, horario ASC, id ASC")
+            rows = cur.fetchall()
+    return [dict(r) for r in rows]
 
-def salvar(apostas):
-    with open(CSV_FILE, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=CAMPOS)
-        w.writeheader()
-        w.writerows(apostas)
+def inserir(aposta):
+    with conectar() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO apostas (data, horario, descricao, odd, stake, resultado, casa, esporte)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                aposta["data"], aposta["horario"], aposta["descricao"],
+                aposta["odd"], aposta["stake"], aposta["resultado"],
+                aposta["casa"], aposta["esporte"]
+            ))
+            new_id = cur.fetchone()[0]
+        conn.commit()
+    return new_id
 
-def proximo_id(apostas):
-    if not apostas:
-        return 1
-    return max(int(a["id"]) for a in apostas) + 1
+def atualizar_campo(id_aposta, campo, valor):
+    campos_permitidos = {"data","horario","descricao","odd","stake","resultado","casa","esporte"}
+    if campo not in campos_permitidos:
+        return
+    with conectar() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"UPDATE apostas SET {campo} = %s WHERE id = %s", (valor, id_aposta))
+        conn.commit()
 
-# ── Métricas ─────────────────────────────────────────────────────────────────
-def calcular_metricas(apostas):
+def buscar_por_id(id_aposta):
+    with conectar() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM apostas WHERE id = %s", (id_aposta,))
+            row = cur.fetchone()
+    return dict(row) if row else None
+
+def calcular_metricas():
+    apostas = carregar()
     res = [a for a in apostas if a["resultado"] in ("ganhou", "perdeu")]
     if not res:
         return None
@@ -87,6 +125,14 @@ def calcular_metricas(apostas):
         "roi":        lucro / stake_total,
         "progressao": lucro / BANCA_INICIAL,
     }
+
+def exportar_csv_string():
+    apostas = carregar()
+    linhas  = ["id,data,horario,descricao,odd,stake,resultado,casa,esporte"]
+    for a in apostas:
+        data = a["data"].strftime("%Y-%m-%d") if hasattr(a["data"], "strftime") else str(a["data"])
+        linhas.append(f"{a['id']},{data},{a.get('horario','')},{a['descricao']},{a['odd']},{a['stake']},{a['resultado']},{a.get('casa','')},{a.get('esporte','')}")
+    return "\n".join(linhas).encode("utf-8")
 
 # ── /start e menu ─────────────────────────────────────────────────────────────
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -105,23 +151,20 @@ async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if txt == "📋 Últimas apostas":    return await ultimas(update, ctx)
     if txt == "🏦 Por casa":           return await por_casa(update, ctx)
     if txt == "✏️ Editar aposta":      return await editar_inicio(update, ctx)
-    if txt == "📤 Exportar CSV":        return await exportar_csv(update, ctx)
+    if txt == "📤 Exportar CSV":       return await exportar_csv(update, ctx)
 
 # ── NOVA APOSTA ───────────────────────────────────────────────────────────────
 async def nova_aposta_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     hoje = datetime.now().strftime("%d/%m/%Y")
     await update.message.reply_text(
-        f"📅 *Data do jogo*\n"
-        f"Hoje é *{hoje}* — mande *0* para confirmar ou digite outra data (DD/MM/AAAA):",
-        reply_markup=teclado_cancelar(),
-        parse_mode="Markdown"
+        f"📅 *Data do jogo*\nHoje é *{hoje}* — mande *0* para confirmar ou digite outra data (DD/MM/AAAA):",
+        reply_markup=teclado_cancelar(), parse_mode="Markdown"
     )
     return DATA
 
 async def receber_data(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     raw = update.message.text.strip()
-    if raw == CANCELAR_BTN:
-        return await cancelar(update, ctx)
+    if raw == CANCELAR_BTN: return await cancelar(update, ctx)
     if raw == "0":
         ctx.user_data["data"] = datetime.now().strftime("%Y-%m-%d")
     else:
@@ -129,74 +172,52 @@ async def receber_data(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         for fmt in ("%d/%m/%Y", "%d/%m/%y"):
             try:
                 ctx.user_data["data"] = datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
-                ok = True
-                break
-            except ValueError:
-                pass
+                ok = True; break
+            except ValueError: pass
         if not ok:
             await update.message.reply_text("❌ Data inválida. Use DD/MM/AAAA ou 0 para hoje:")
             return DATA
-
     agora = datetime.now().strftime("%H:%M")
     await update.message.reply_text(
-        f"⏰ *Horário do jogo*\n"
-        f"Agora são *{agora}* — mande *0* para usar esse horário ou digite outro (HH:MM):",
-        reply_markup=teclado_cancelar(),
-        parse_mode="Markdown"
+        f"⏰ *Horário do jogo*\nAgora são *{agora}* — mande *0* para usar esse horário ou digite outro (HH:MM):",
+        reply_markup=teclado_cancelar(), parse_mode="Markdown"
     )
     return HORARIO
 
 async def receber_horario(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     raw = update.message.text.strip()
-    if raw == CANCELAR_BTN:
-        return await cancelar(update, ctx)
+    if raw == CANCELAR_BTN: return await cancelar(update, ctx)
     if raw == "0":
         ctx.user_data["horario"] = datetime.now().strftime("%H:%M")
     else:
         try:
             ctx.user_data["horario"] = datetime.strptime(raw, "%H:%M").strftime("%H:%M")
         except ValueError:
-            await update.message.reply_text("❌ Use HH:MM (ex: 21:30) ou 0 para agora:")
+            await update.message.reply_text("❌ Use HH:MM ou 0 para agora:")
             return HORARIO
-
-    await update.message.reply_text(
-        "🏷 *Descrição da aposta:*",
-        reply_markup=teclado_cancelar(),
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text("🏷 *Descrição da aposta:*", reply_markup=teclado_cancelar(), parse_mode="Markdown")
     return DESCRICAO
 
 async def receber_descricao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if update.message.text.strip() == CANCELAR_BTN:
-        return await cancelar(update, ctx)
+    if update.message.text.strip() == CANCELAR_BTN: return await cancelar(update, ctx)
     ctx.user_data["descricao"] = update.message.text.strip()
-    await update.message.reply_text(
-        "🔢 *Odd:*",
-        reply_markup=teclado_cancelar(),
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text("🔢 *Odd:*", reply_markup=teclado_cancelar(), parse_mode="Markdown")
     return ODD
 
 async def receber_odd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     raw = update.message.text.strip()
-    if raw == CANCELAR_BTN:
-        return await cancelar(update, ctx)
+    if raw == CANCELAR_BTN: return await cancelar(update, ctx)
     try:
         ctx.user_data["odd"] = float(raw.replace(",", "."))
-        await update.message.reply_text(
-            "💰 *Stake (R$):*",
-            reply_markup=teclado_cancelar(),
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text("💰 *Stake (R$):*", reply_markup=teclado_cancelar(), parse_mode="Markdown")
         return STAKE
     except ValueError:
-        await update.message.reply_text("❌ Odd inválida. Digite um número:")
+        await update.message.reply_text("❌ Odd inválida:")
         return ODD
 
 async def receber_stake(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     raw = update.message.text.strip()
-    if raw == CANCELAR_BTN:
-        return await cancelar(update, ctx)
+    if raw == CANCELAR_BTN: return await cancelar(update, ctx)
     try:
         ctx.user_data["stake"] = float(raw.replace(",", "."))
         teclado_esp = [[e] for e in ESPORTES] + [[CANCELAR_BTN]]
@@ -207,13 +228,12 @@ async def receber_stake(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return ESPORTE
     except ValueError:
-        await update.message.reply_text("❌ Stake inválido. Digite um número:")
+        await update.message.reply_text("❌ Stake inválido:")
         return STAKE
 
 async def receber_esporte(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     raw = update.message.text.strip()
-    if raw == CANCELAR_BTN:
-        return await cancelar(update, ctx)
+    if raw == CANCELAR_BTN: return await cancelar(update, ctx)
     if ctx.user_data.pop("aguardando_esporte_custom", False):
         ctx.user_data["esporte"] = raw
     elif raw == "Outro":
@@ -232,8 +252,7 @@ async def receber_esporte(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def receber_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     casa = update.message.text.strip()
-    if casa == CANCELAR_BTN:
-        return await cancelar(update, ctx)
+    if casa == CANCELAR_BTN: return await cancelar(update, ctx)
     if casa == "Outra":
         await update.message.reply_text("Digite o nome da casa:", reply_markup=teclado_cancelar())
         ctx.user_data["aguardando_casa_custom"] = True
@@ -241,9 +260,7 @@ async def receber_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data.pop("aguardando_casa_custom", False)
     ctx.user_data["casa"] = casa
 
-    apostas = carregar()
-    nova = {
-        "id":        proximo_id(apostas),
+    new_id = inserir({
         "data":      ctx.user_data["data"],
         "horario":   ctx.user_data.get("horario", ""),
         "descricao": ctx.user_data["descricao"],
@@ -252,20 +269,18 @@ async def receber_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "resultado": "pendente",
         "casa":      ctx.user_data["casa"],
         "esporte":   ctx.user_data.get("esporte", ""),
-    }
-    apostas.append(nova)
-    salvar(apostas)
+    })
 
-    data_fmt = datetime.strptime(nova["data"], "%Y-%m-%d").strftime("%d/%m/%Y")
-    hora_txt = f" às {nova['horario']}" if nova.get("horario") else ""
+    data_fmt = datetime.strptime(ctx.user_data["data"], "%Y-%m-%d").strftime("%d/%m/%Y")
+    hora_txt = f" às {ctx.user_data['horario']}" if ctx.user_data.get("horario") else ""
     await update.message.reply_text(
-        f"✅ *Aposta #{nova['id']} salva!*\n\n"
+        f"✅ *Aposta #{new_id} salva!*\n\n"
         f"📅 {data_fmt}{hora_txt}\n"
-        f"🏅 {nova.get('esporte','')}\n"
-        f"🏷 {nova['descricao']}\n"
-        f"🔢 Odd: {nova['odd']}\n"
-        f"💰 Stake: R$ {float(nova['stake']):.2f}\n"
-        f"🏦 Casa: {nova['casa']}",
+        f"🏅 {ctx.user_data.get('esporte','')}\n"
+        f"🏷 {ctx.user_data['descricao']}\n"
+        f"🔢 Odd: {ctx.user_data['odd']}\n"
+        f"💰 Stake: R$ {float(ctx.user_data['stake']):.2f}\n"
+        f"🏦 Casa: {ctx.user_data['casa']}",
         parse_mode="Markdown"
     )
     return await voltar_menu(update, ctx)
@@ -277,37 +292,28 @@ async def atualizar_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not pendentes:
         await update.message.reply_text("✅ Nenhuma aposta pendente!")
         return ConversationHandler.END
-
-    pendentes.sort(key=lambda a: a["data"])
+    pendentes.sort(key=lambda a: (str(a["data"]), a.get("horario") or ""))
     linhas = ["⏳ *Apostas pendentes:*\n"]
     for a in pendentes:
-        data_fmt = datetime.strptime(a["data"], "%Y-%m-%d").strftime("%d/%m")
-        hora = f" {a.get('horario','')}h" if a.get("horario") else ""
-        linhas.append(f"*#{a['id']}* — {data_fmt}{hora} — {a['descricao'][:35]} (odd {a['odd']})")
+        data_fmt = a["data"].strftime("%d/%m") if hasattr(a["data"], "strftime") else str(a["data"])[:10]
+        hora = f" {a.get('horario','')}" if a.get("horario") else ""
+        linhas.append(f"*#{a['id']}* — {data_fmt}{hora} — {str(a['descricao'])[:35]} (odd {a['odd']})")
     linhas.append("\nDigite o *ID* da aposta a atualizar:")
-    await update.message.reply_text(
-        "\n".join(linhas),
-        reply_markup=teclado_cancelar(),
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text("\n".join(linhas), reply_markup=teclado_cancelar(), parse_mode="Markdown")
     return ATUALIZAR_ID
 
 async def receber_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     raw = update.message.text.strip()
-    if raw == CANCELAR_BTN:
-        return await cancelar(update, ctx)
+    if raw == CANCELAR_BTN: return await cancelar(update, ctx)
     try:
         id_alvo = int(raw)
     except ValueError:
         await update.message.reply_text("❌ Digite só o número do ID:")
         return ATUALIZAR_ID
-
-    apostas = carregar()
-    aposta  = next((a for a in apostas if int(a["id"]) == id_alvo and a["resultado"] == "pendente"), None)
-    if not aposta:
+    aposta = buscar_por_id(id_alvo)
+    if not aposta or aposta["resultado"] != "pendente":
         await update.message.reply_text("❌ ID não encontrado ou aposta já resolvida.")
         return ATUALIZAR_ID
-
     ctx.user_data["id_alvo"] = id_alvo
     teclado = [["✅ Ganhou", "❌ Perdeu", "↩️ Void"], [CANCELAR_BTN]]
     await update.message.reply_text(
@@ -319,25 +325,19 @@ async def receber_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def receber_resultado(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     txt = update.message.text.strip()
-    if txt == CANCELAR_BTN:
-        return await cancelar(update, ctx)
+    if txt == CANCELAR_BTN: return await cancelar(update, ctx)
     mapa = {"✅ Ganhou": "ganhou", "❌ Perdeu": "perdeu", "↩️ Void": "void"}
     res  = mapa.get(txt)
     if not res:
         await update.message.reply_text("Escolha uma das opções:")
         return ATUALIZAR_RES
-
     id_alvo = ctx.user_data["id_alvo"]
-    apostas = carregar()
-    aposta  = next((a for a in apostas if int(a["id"]) == id_alvo), None)
-    aposta["resultado"] = res
-    salvar(apostas)
-
+    atualizar_campo(id_alvo, "resultado", res)
+    aposta = buscar_por_id(id_alvo)
     lucro_txt = ""
     if res in ("ganhou", "perdeu"):
         l = float(aposta["stake"]) * (float(aposta["odd"]) - 1) if res == "ganhou" else -float(aposta["stake"])
         lucro_txt = f"\n💰 Lucro: *{'+'if l>=0 else ''}R$ {l:.2f}*"
-
     await update.message.reply_text(
         f"✅ Aposta *#{id_alvo}* atualizada para *{res}*!{lucro_txt}",
         parse_mode="Markdown"
@@ -347,21 +347,21 @@ async def receber_resultado(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ── VER PENDENTES ─────────────────────────────────────────────────────────────
 async def ver_pendentes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     apostas   = carregar()
-    pendentes = sorted([a for a in apostas if a["resultado"] == "pendente"], key=lambda a: (a["data"], a.get("horario","")))
+    pendentes = sorted([a for a in apostas if a["resultado"] == "pendente"],
+                       key=lambda a: (str(a["data"]), a.get("horario") or ""))
     if not pendentes:
         await update.message.reply_text("✅ Nenhuma aposta pendente!")
         return
     linhas = [f"⏳ *{len(pendentes)} apostas pendentes:*\n"]
     for a in pendentes:
-        data_fmt = datetime.strptime(a["data"], "%Y-%m-%d").strftime("%d/%m/%Y")
+        data_fmt = a["data"].strftime("%d/%m/%Y") if hasattr(a["data"], "strftime") else str(a["data"])[:10]
         hora = f" {a.get('horario','')}" if a.get("horario") else ""
         linhas.append(f"*#{a['id']}* {data_fmt}{hora} | odd {a['odd']} | R${float(a['stake']):.0f} | {a.get('casa','')}\n_{a['descricao']}_\n")
     await update.message.reply_text("\n".join(linhas), parse_mode="Markdown")
 
 # ── RESUMO ────────────────────────────────────────────────────────────────────
 async def resumo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    apostas = carregar()
-    m = calcular_metricas(apostas)
+    m = calcular_metricas()
     if not m:
         await update.message.reply_text("Nenhuma aposta resolvida ainda.")
         return
@@ -383,11 +383,11 @@ async def ultimas(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not apostas:
         await update.message.reply_text("Nenhuma aposta cadastrada.")
         return
-    ultimas_10 = sorted(apostas, key=lambda a: (a["data"], int(a["id"])), reverse=True)[:10]
+    ultimas_10 = sorted(apostas, key=lambda a: (str(a["data"]), int(a["id"])), reverse=True)[:10]
     emojis = {"ganhou": "✅", "perdeu": "❌", "pendente": "⏳", "void": "↩️"}
     linhas = ["📋 *Últimas 10 apostas:*\n"]
     for a in ultimas_10:
-        data_fmt = datetime.strptime(a["data"], "%Y-%m-%d").strftime("%d/%m")
+        data_fmt = a["data"].strftime("%d/%m") if hasattr(a["data"], "strftime") else str(a["data"])[:10]
         hora = f" {a.get('horario','')}" if a.get("horario") else ""
         e = emojis.get(a["resultado"], "")
         linhas.append(f"{e} *#{a['id']}* {data_fmt}{hora} | odd {a['odd']} | R${float(a['stake']):.0f}\n_{a['descricao']}_\n")
@@ -402,15 +402,13 @@ async def por_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     casas = {}
     for a in res:
-        casa = a.get("casa", "") or "Sem casa"
+        casa = a.get("casa") or "Sem casa"
         if casa not in casas:
             casas[casa] = {"ap": 0, "g": 0, "stake": 0.0, "lucro": 0.0}
         c = casas[casa]
-        c["ap"]    += 1
-        c["stake"] += float(a["stake"])
+        c["ap"] += 1; c["stake"] += float(a["stake"])
         if a["resultado"] == "ganhou":
-            c["g"]     += 1
-            c["lucro"] += float(a["stake"]) * (float(a["odd"]) - 1)
+            c["g"] += 1; c["lucro"] += float(a["stake"]) * (float(a["odd"]) - 1)
         else:
             c["lucro"] -= float(a["stake"])
     ordenadas = sorted(casas.items(), key=lambda x: x[1]["lucro"], reverse=True)
@@ -418,211 +416,140 @@ async def por_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     for nome, c in ordenadas:
         roi   = c["lucro"] / c["stake"] if c["stake"] else 0
         emoji = "🟢" if c["lucro"] >= 0 else "🔴"
-        linhas.append(
-            f"{emoji} *{nome}*\n"
-            f"  {c['ap']} apostas | {c['g']}V/{c['ap']-c['g']}D\n"
-            f"  Lucro: {'+'if c['lucro']>=0 else ''}R$ {c['lucro']:.2f} | ROI: {roi:+.1%}\n"
-        )
+        linhas.append(f"{emoji} *{nome}*\n  {c['ap']} apostas | {c['g']}V/{c['ap']-c['g']}D\n  Lucro: {'+'if c['lucro']>=0 else ''}R$ {c['lucro']:.2f} | ROI: {roi:+.1%}\n")
     await update.message.reply_text("\n".join(linhas), parse_mode="Markdown")
-
 
 # ── EDITAR APOSTA ─────────────────────────────────────────────────────────────
 CAMPOS_EDITAVEIS = ["data", "horario", "descricao", "odd", "stake", "esporte", "casa"]
-CAMPOS_LABEL     = {
-    "data":      "📅 Data",
-    "horario":   "⏰ Horário",
-    "descricao": "🏷 Descrição",
-    "odd":       "🔢 Odd",
-    "stake":     "💰 Stake",
-    "esporte":   "🏅 Esporte",
-    "casa":      "🏦 Casa",
-}
+CAMPOS_LABEL     = {"data":"📅 Data","horario":"⏰ Horário","descricao":"🏷 Descrição",
+                    "odd":"🔢 Odd","stake":"💰 Stake","esporte":"🏅 Esporte","casa":"🏦 Casa"}
 
 async def editar_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     apostas   = carregar()
     pendentes = sorted([a for a in apostas if a["resultado"] == "pendente"],
-                       key=lambda a: (a["data"], a.get("horario", "")))
-    emojis    = {"ganhou": "✅", "perdeu": "❌", "pendente": "⏳", "void": "↩️"}
-    linhas    = ["✏️ *Editar aposta*\n"]
-
+                       key=lambda a: (str(a["data"]), a.get("horario") or ""))
+    emojis = {"ganhou":"✅","perdeu":"❌","pendente":"⏳","void":"↩️"}
+    linhas = ["✏️ *Editar aposta*\n"]
     if pendentes:
         linhas.append("*Apostas pendentes:*\n")
         for a in pendentes:
-            data_fmt = datetime.strptime(a["data"], "%Y-%m-%d").strftime("%d/%m")
-            hora     = f" {a.get('horario','')}" if a.get("horario") else ""
-            linhas.append(f"⏳ *#{a['id']}* {data_fmt}{hora} | odd {a['odd']} | _{a['descricao'][:30]}_")
+            data_fmt = a["data"].strftime("%d/%m") if hasattr(a["data"],"strftime") else str(a["data"])[:10]
+            hora = f" {a.get('horario','')}" if a.get("horario") else ""
+            linhas.append(f"⏳ *#{a['id']}* {data_fmt}{hora} | odd {a['odd']} | _{str(a['descricao'])[:30]}_")
         linhas.append("")
     else:
         linhas.append("Nenhuma aposta pendente.\n")
-
     linhas.append("Digite o *ID* da aposta que quer editar\n_(pode ser qualquer aposta, não só as pendentes)_:")
-    await update.message.reply_text(
-        "\n".join(linhas),
-        reply_markup=teclado_cancelar(),
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text("\n".join(linhas), reply_markup=teclado_cancelar(), parse_mode="Markdown")
     return EDITAR_ID
 
 async def editar_receber_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     raw = update.message.text.strip()
-    if raw == CANCELAR_BTN:
-        return await cancelar(update, ctx)
+    if raw == CANCELAR_BTN: return await cancelar(update, ctx)
     try:
         id_alvo = int(raw)
     except ValueError:
         await update.message.reply_text("❌ Digite só o número do ID:")
         return EDITAR_ID
-
-    apostas = carregar()
-    aposta  = next((a for a in apostas if int(a["id"]) == id_alvo), None)
+    aposta = buscar_por_id(id_alvo)
     if not aposta:
         await update.message.reply_text("❌ ID não encontrado.")
         return EDITAR_ID
-
     ctx.user_data["editar_id"] = id_alvo
-    data_fmt = datetime.strptime(aposta["data"], "%Y-%m-%d").strftime("%d/%m/%Y")
-    hora     = f" {aposta.get('horario','')}" if aposta.get("horario") else ""
-
-    info = (
-        f"✏️ *Aposta #{id_alvo}*\n\n"
-        f"📅 {data_fmt}{hora}\n"
-        f"🏷 {aposta['descricao']}\n"
-        f"🔢 Odd: {aposta['odd']}\n"
-        f"💰 Stake: R$ {float(aposta['stake']):.2f}\n"
-        f"🏦 Casa: {aposta.get('casa','')}\n"
-        f"📊 Resultado: {aposta['resultado']}\n\n"
-        f"*Qual campo quer editar?*"
-    )
+    data_fmt = aposta["data"].strftime("%d/%m/%Y") if hasattr(aposta["data"],"strftime") else str(aposta["data"])[:10]
+    hora = f" {aposta.get('horario','')}" if aposta.get("horario") else ""
+    info = (f"✏️ *Aposta #{id_alvo}*\n\n📅 {data_fmt}{hora}\n🏷 {aposta['descricao']}\n"
+            f"🔢 Odd: {aposta['odd']}\n💰 Stake: R$ {float(aposta['stake']):.2f}\n"
+            f"🏦 Casa: {aposta.get('casa','')}\n📊 Resultado: {aposta['resultado']}\n\n*Qual campo quer editar?*")
     teclado = [[CAMPOS_LABEL[c]] for c in CAMPOS_EDITAVEIS] + [[CANCELAR_BTN]]
-    await update.message.reply_text(
-        info,
+    await update.message.reply_text(info,
         reply_markup=ReplyKeyboardMarkup(teclado, resize_keyboard=True, one_time_keyboard=True),
-        parse_mode="Markdown"
-    )
+        parse_mode="Markdown")
     return EDITAR_CAMPO
 
 async def editar_receber_campo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     raw = update.message.text.strip()
-    if raw == CANCELAR_BTN:
-        return await cancelar(update, ctx)
-
+    if raw == CANCELAR_BTN: return await cancelar(update, ctx)
     campo = next((k for k, v in CAMPOS_LABEL.items() if v == raw), None)
     if not campo:
         await update.message.reply_text("❌ Escolha um dos campos:")
         return EDITAR_CAMPO
-
     ctx.user_data["editar_campo"] = campo
-
     if campo == "casa":
         teclado = [[c] for c in CASAS] + [[CANCELAR_BTN]]
-        await update.message.reply_text(
-            "🏦 *Escolha a nova casa:*",
+        await update.message.reply_text("🏦 *Escolha a nova casa:*",
             reply_markup=ReplyKeyboardMarkup(teclado, resize_keyboard=True, one_time_keyboard=True),
-            parse_mode="Markdown"
-        )
+            parse_mode="Markdown")
         return EDITAR_CASA
-
-    dicas = {
-        "data":      "Digite a nova data (DD/MM/AAAA) ou 0 para hoje:",
-        "horario":   "Digite o novo horário (HH:MM) ou 0 para agora:",
-        "descricao": "Digite a nova descrição:",
-        "odd":       "Digite a nova odd:",
-        "stake":     "Digite o novo stake (R$):",
-    }
-    await update.message.reply_text(
-        dicas[campo],
-        reply_markup=teclado_cancelar(),
-        parse_mode="Markdown"
-    )
+    if campo == "esporte":
+        teclado = [[e] for e in ESPORTES] + [[CANCELAR_BTN]]
+        await update.message.reply_text("🏅 *Escolha o novo esporte:*",
+            reply_markup=ReplyKeyboardMarkup(teclado, resize_keyboard=True, one_time_keyboard=True),
+            parse_mode="Markdown")
+        return EDITAR_CASA
+    dicas = {"data":"Nova data (DD/MM/AAAA) ou 0 para hoje:","horario":"Novo horário (HH:MM) ou 0 para agora:",
+             "descricao":"Nova descrição:","odd":"Nova odd:","stake":"Novo stake (R$):"}
+    await update.message.reply_text(dicas[campo], reply_markup=teclado_cancelar())
     return EDITAR_VALOR
 
 async def editar_receber_valor(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    raw    = update.message.text.strip()
-    if raw == CANCELAR_BTN:
-        return await cancelar(update, ctx)
-    campo  = ctx.user_data["editar_campo"]
+    raw   = update.message.text.strip()
+    if raw == CANCELAR_BTN: return await cancelar(update, ctx)
+    campo = ctx.user_data["editar_campo"]
     id_alvo = ctx.user_data["editar_id"]
-
-    # Validar e converter
     novo_valor = None
     if campo == "data":
-        if raw == "0":
-            novo_valor = datetime.now().strftime("%Y-%m-%d")
+        if raw == "0": novo_valor = datetime.now().strftime("%Y-%m-%d")
         else:
             for fmt in ("%d/%m/%Y", "%d/%m/%y"):
-                try:
-                    novo_valor = datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
-                    break
-                except ValueError:
-                    pass
+                try: novo_valor = datetime.strptime(raw, fmt).strftime("%Y-%m-%d"); break
+                except ValueError: pass
             if not novo_valor:
-                await update.message.reply_text("❌ Data inválida. Use DD/MM/AAAA ou 0 para hoje:")
+                await update.message.reply_text("❌ Data inválida:")
                 return EDITAR_VALOR
     elif campo == "horario":
-        if raw == "0":
-            novo_valor = datetime.now().strftime("%H:%M")
-        else:
-            try:
-                novo_valor = datetime.strptime(raw, "%H:%M").strftime("%H:%M")
-            except ValueError:
-                await update.message.reply_text("❌ Use HH:MM ou 0 para agora:")
-                return EDITAR_VALOR
-    elif campo in ("odd", "stake"):
-        try:
-            novo_valor = float(raw.replace(",", "."))
+        novo_valor = datetime.now().strftime("%H:%M") if raw == "0" else raw
+    elif campo in ("odd","stake"):
+        try: novo_valor = float(raw.replace(",","."))
         except ValueError:
-            await update.message.reply_text("❌ Digite um número válido:")
+            await update.message.reply_text("❌ Digite um número:")
             return EDITAR_VALOR
     else:
         novo_valor = raw
-
     return await aplicar_edicao(update, ctx, id_alvo, campo, novo_valor)
 
 async def editar_receber_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     raw = update.message.text.strip()
-    if raw == CANCELAR_BTN:
-        return await cancelar(update, ctx)
-    if raw == "Outra":
-        await update.message.reply_text("Digite o nome da casa:", reply_markup=teclado_cancelar())
+    if raw == CANCELAR_BTN: return await cancelar(update, ctx)
+    if raw == "Outra" or raw == "Outro":
+        await update.message.reply_text("Digite o nome:", reply_markup=teclado_cancelar())
         ctx.user_data["editar_campo"] = "casa_custom"
         return EDITAR_VALOR
-    return await aplicar_edicao(update, ctx, ctx.user_data["editar_id"], "casa", raw)
+    return await aplicar_edicao(update, ctx, ctx.user_data["editar_id"], ctx.user_data["editar_campo"], raw)
 
 async def aplicar_edicao(update, ctx, id_alvo, campo, novo_valor):
-    apostas = carregar()
-    aposta  = next((a for a in apostas if int(a["id"]) == id_alvo), None)
     campo_real = "casa" if campo == "casa_custom" else campo
-    aposta[campo_real] = novo_valor
-    salvar(apostas)
-
-    label = CAMPOS_LABEL.get(campo_real, campo_real)
-    exibe = novo_valor
-    if campo_real == "data":
+    atualizar_campo(id_alvo, campo_real, novo_valor)
+    label  = CAMPOS_LABEL.get(campo_real, campo_real)
+    exibe  = novo_valor
+    if campo_real == "data" and isinstance(novo_valor, str) and len(novo_valor) == 10:
         exibe = datetime.strptime(novo_valor, "%Y-%m-%d").strftime("%d/%m/%Y")
-    elif campo_real in ("odd", "stake"):
+    elif campo_real in ("odd","stake"):
         exibe = f"{float(novo_valor):.2f}"
-
-    await update.message.reply_text(
-        f"✅ *Aposta #{id_alvo} atualizada!*\n{label} → *{exibe}*",
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text(f"✅ *Aposta #{id_alvo} atualizada!*\n{label} → *{exibe}*", parse_mode="Markdown")
     return await voltar_menu(update, ctx)
 
-# ── EXPORTAR CSV ─────────────────────────────────────────────────────────────
+# ── EXPORTAR CSV ──────────────────────────────────────────────────────────────
 async def exportar_csv(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not os.path.exists(CSV_FILE):
-        await update.message.reply_text("Nenhuma aposta cadastrada ainda.")
-        return
     apostas   = carregar()
     total     = len(apostas)
     pendentes = sum(1 for a in apostas if a["resultado"] == "pendente")
-    caption   = f"📊 apostas.csv\n{total} apostas | {pendentes} pendentes"
-    with open(CSV_FILE, "rb") as f:
-        await update.message.reply_document(
-            document=InputFile(f, filename="apostas.csv"),
-            caption=caption,
-            parse_mode="Markdown"
-        )
+    csv_bytes = exportar_csv_string()
+    caption   = f"\U0001f4ca apostas.csv\n{total} apostas | {pendentes} pendentes"
+    await update.message.reply_document(
+        document=InputFile(csv_bytes, filename="apostas.csv"),
+        caption=caption
+    )
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 async def voltar_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -634,50 +561,20 @@ async def cancelar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Cancelado.", reply_markup=teclado_menu())
     return ConversationHandler.END
 
-
-# ── SERVIDOR HTTP (serve o CSV via URL) ──────────────────────────────────────
-class CSVHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/apostas.csv":
-            if os.path.exists(CSV_FILE):
-                with open(CSV_FILE, "rb") as f:
-                    data = f.read()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/csv; charset=utf-8")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-            else:
-                self.send_response(404)
-                self.end_headers()
-        else:
-            self.send_response(404)
-            self.end_headers()
-
-    def log_message(self, format, *args):
-        pass  # silencia logs do servidor
-
-def iniciar_servidor():
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), CSVHandler)
-    server.serve_forever()
-
-# ── SERVIDOR DE KEEP-ALIVE (Render exige porta aberta) ───────────────────────
+# ── SERVIDOR KEEP-ALIVE ───────────────────────────────────────────────────────
 class PingHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
-    def log_message(self, *args):
-        pass  # silencia logs do servidor
+        self.send_response(200); self.end_headers(); self.wfile.write(b"OK")
+    def log_message(self, *args): pass
 
 def iniciar_servidor():
     port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), PingHandler)
-    server.serve_forever()
+    HTTPServer(("0.0.0.0", port), PingHandler).serve_forever()
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 def main():
+    inicializar_db()
+
     app = Application.builder().token(TOKEN).build()
 
     conv_nova = ConversationHandler(
@@ -691,24 +588,18 @@ def main():
             ESPORTE:   [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_esporte)],
             CASA:      [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_casa)],
         },
-        fallbacks=[
-            CommandHandler("cancelar", cancelar),
-            MessageHandler(filters.Regex(f"^{CANCELAR_BTN}$"), cancelar),
-        ],
+        fallbacks=[CommandHandler("cancelar", cancelar),
+                   MessageHandler(filters.Regex(f"^{CANCELAR_BTN}$"), cancelar)],
     )
-
     conv_atualizar = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^✅ Atualizar resultado$"), atualizar_inicio)],
         states={
             ATUALIZAR_ID:  [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_id)],
             ATUALIZAR_RES: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_resultado)],
         },
-        fallbacks=[
-            CommandHandler("cancelar", cancelar),
-            MessageHandler(filters.Regex(f"^{CANCELAR_BTN}$"), cancelar),
-        ],
+        fallbacks=[CommandHandler("cancelar", cancelar),
+                   MessageHandler(filters.Regex(f"^{CANCELAR_BTN}$"), cancelar)],
     )
-
     conv_editar = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^✏️ Editar aposta$"), editar_inicio)],
         states={
@@ -717,10 +608,8 @@ def main():
             EDITAR_VALOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, editar_receber_valor)],
             EDITAR_CASA:  [MessageHandler(filters.TEXT & ~filters.COMMAND, editar_receber_casa)],
         },
-        fallbacks=[
-            CommandHandler("cancelar", cancelar),
-            MessageHandler(filters.Regex(f"^{CANCELAR_BTN}$"), cancelar),
-        ],
+        fallbacks=[CommandHandler("cancelar", cancelar),
+                   MessageHandler(filters.Regex(f"^{CANCELAR_BTN}$"), cancelar)],
     )
 
     app.add_handler(CommandHandler("start", start))
@@ -730,10 +619,7 @@ def main():
     app.add_handler(conv_editar)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_botao))
 
-    t = threading.Thread(target=iniciar_servidor, daemon=True)
-    t.start()
-    t = threading.Thread(target=iniciar_servidor, daemon=True)
-    t.start()
+    threading.Thread(target=iniciar_servidor, daemon=True).start()
     print("🤖 Bot rodando! Abra o Telegram e mande /start")
     app.run_polling()
 
