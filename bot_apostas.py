@@ -377,7 +377,7 @@ CAMPOS_EDITAVEIS = ["data","horario","descricao","odd","stake","esporte","casa",
 CAMPOS_LABEL     = {
     "data":"📅 Data","horario":"⏰ Horário","descricao":"🏷 Descrição",
     "odd":"🔢 Odd","stake":"💰 Stake","esporte":"🏅 Esporte",
-    "casa":"🏦 Casa","resultado":"📊 Resultado","cashout":"💸 Cashout","freebet":"🎁 Freebet"
+    "casa":"🏦 Casa","resultado":"📊 Resultado","cashout":"💸 Cashout"
 }
 
 async def editar_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -540,7 +540,13 @@ async def aplicar_edicao(update, ctx, id_alvo, campo, novo_valor):
         exibe = datetime.strptime(novo_valor,"%Y-%m-%d").strftime("%d/%m/%Y")
     elif campo_real in ("odd","stake"):
         exibe = f"{float(novo_valor):.2f}"
-    await update.message.reply_text(f"✅ *Aposta #{id_alvo} atualizada!*\n{label} → *{exibe}*", parse_mode="Markdown")
+    # Escolher emoji baseado no resultado se campo for resultado
+    emoji_conf = "✅"
+    if campo_real == "resultado":
+        if novo_valor == "perdeu": emoji_conf = "❌"
+        elif novo_valor == "void": emoji_conf = "↩️"
+        elif novo_valor == "pendente": emoji_conf = "⏳"
+    await update.message.reply_text(f"{emoji_conf} *Aposta #{id_alvo} atualizada!*\n{label} → *{exibe}*", parse_mode="Markdown")
     return await voltar_menu(update, ctx)
 
 
@@ -555,7 +561,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     from datetime import timedelta
 
     apostas = carregar()
-    apostas_ord = sorted(apostas, key=lambda a: (str(a["data"]), a.get("horario") or "", int(a["id"])))
+    apostas_ord = sorted(apostas, key=lambda a: (str(a["data"]), a.get("horario") or "99:99", int(a["id"])))
     df_res = [a for a in apostas_ord if a["resultado"] in ("ganhou","perdeu")]
 
     BANCA = 5000
