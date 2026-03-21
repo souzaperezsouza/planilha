@@ -62,8 +62,13 @@ def inicializar_db():
                     stake     NUMERIC(10,2) NOT NULL,
                     resultado VARCHAR(10) DEFAULT 'pendente',
                     casa      VARCHAR(50),
-                    esporte   VARCHAR(50)
+                    esporte   VARCHAR(50),
+                    freebet   VARCHAR(3) DEFAULT 'nao'
                 )
+            """)
+            # Adicionar coluna se não existir (migração)
+            cur.execute("""
+                ALTER TABLE apostas ADD COLUMN IF NOT EXISTS freebet VARCHAR(3) DEFAULT 'nao'
             """)
         conn.commit()
 
@@ -77,10 +82,10 @@ def inserir(a):
     with conectar() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO apostas (data,horario,descricao,odd,stake,resultado,casa,esporte)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
+                INSERT INTO apostas (data,horario,descricao,odd,stake,resultado,casa,esporte,freebet)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
             """, (a["data"],a["horario"],a["descricao"],a["odd"],a["stake"],
-                  a["resultado"],a["casa"],a["esporte"]))
+                  a["resultado"],a["casa"],a["esporte"],a.get("freebet","nao")))
             new_id = cur.fetchone()[0]
         conn.commit()
     return new_id
@@ -102,9 +107,12 @@ def buscar_por_id(id_aposta):
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 def lucro_aposta(a):
+    freebet = str(a.get("freebet","nao")).strip().lower() == "sim"
     if a["resultado"] == "ganhou":
         return float(a["stake"]) * (float(a["odd"]) - 1)
-    return -float(a["stake"])
+    if a["resultado"] == "perdeu":
+        return 0.0 if freebet else -float(a["stake"])
+    return 0.0
 
 async def voltar_menu(update, ctx):
     ctx.user_data.clear()
@@ -365,7 +373,7 @@ async def resultados_dia(update: Update, ctx: ContextTypes.DEFAULT_TYPE, raw: st
     return True
 
 # ── EDITAR APOSTA ─────────────────────────────────────────────────────────────
-CAMPOS_EDITAVEIS = ["data","horario","descricao","odd","stake","esporte","casa","resultado","cashout"]
+CAMPOS_EDITAVEIS = ["data","horario","descricao","odd","stake","esporte","casa","resultado","cashout","freebet"]
 CAMPOS_LABEL     = {
     "data":"📅 Data","horario":"⏰ Horário","descricao":"🏷 Descrição",
     "odd":"🔢 Odd","stake":"💰 Stake","esporte":"🏅 Esporte",
@@ -440,6 +448,13 @@ async def editar_receber_campo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardMarkup(teclado, resize_keyboard=True, one_time_keyboard=True),
             parse_mode="Markdown")
         return EDITAR_CASA
+    if campo == "freebet":
+        teclado_fb = [["✅ Sim, foi freebet","❌ Não foi freebet"],[CANCELAR_BTN]]
+        await update.message.reply_text(
+            "🎁 *Freebet?*\nEssa aposta foi uma freebet?",
+            reply_markup=ReplyKeyboardMarkup(teclado_fb, resize_keyboard=True, one_time_keyboard=True),
+            parse_mode="Markdown")
+        return EDITAR_CASA
     if campo == "cashout":
         await update.message.reply_text(
             "💸 *Cashout*\nDigite o valor que voce *recebeu* de volta (R$):\n"
@@ -502,6 +517,12 @@ async def editar_receber_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         mapa = {"✅ Ganhou":"ganhou","❌ Perdeu":"perdeu","↩️ Void":"void","⏳ Pendente":"pendente"}
         valor = mapa.get(raw, raw)
         return await aplicar_edicao(update, ctx, id_alvo, "resultado", valor)
+    if campo == "freebet":
+        valor = "sim" if raw == "✅ Sim, foi freebet" else "nao"
+        return await aplicar_edicao(update, ctx, id_alvo, "freebet", valor)
+    if campo == "freebet":
+        valor = True if raw == "✅ Sim, foi freebet" else False
+        return await aplicar_edicao(update, ctx, id_alvo, "freebet", valor)
     if raw == "Outra" or raw == "Outro":
         await update.message.reply_text("Digite o nome:", reply_markup=teclado_cancelar())
         ctx.user_data["editar_campo"] = campo + "_custom"
