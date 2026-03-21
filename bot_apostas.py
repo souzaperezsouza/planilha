@@ -583,8 +583,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # Métricas
     lucro_total = sum(
-        float(a["stake"])*(float(a["odd"])-1) if a["resultado"]=="ganhou" else -float(a["stake"])
-        for a in df_res
+        lucro_aposta(a) for a in df_res
     )
     stake_total = sum(float(a["stake"]) for a in df_res)
     vitorias    = sum(1 for a in df_res if a["resultado"]=="ganhou")
@@ -599,7 +598,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     banca_acum = []
     acum = 0
     for a in df_res:
-        acum += float(a["stake"])*(float(a["odd"])-1) if a["resultado"]=="ganhou" else -float(a["stake"])
+        acum += lucro_aposta(a)
         banca_acum.append(acum)
 
     wb = openpyxl.Workbook()
@@ -637,7 +636,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         res=a["resultado"]
         lucro_a=banca_a=prog_a=""
         if res in ("ganhou","perdeu"):
-            lucro_a=float(a["stake"])*(float(a["odd"])-1) if res=="ganhou" else -float(a["stake"])
+            lucro_a=lucro_aposta(a) if res in ("ganhou","perdeu") else ""
             acum2+=lucro_a; banca_a=round(acum2,2); prog_a=round(acum2/BANCA,4)
         res_d={"ganhou":"Ganhou","perdeu":"Perdeu","void":"Void","pendente":"Pendente"}.get(res,res)
         data_fmt=a["data"].strftime("%d/%m/%Y") if hasattr(a["data"],"strftime") else str(a["data"])[:10]
@@ -679,7 +678,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     acum3=0
     for i,(data_k,ap) in enumerate(sorted(por_dia.items())):
         er=4+i; rb=WHITE if i%2==0 else ALT
-        lucro_d=sum(float(a["stake"])*(float(a["odd"])-1) if a["resultado"]=="ganhou" else -float(a["stake"]) for a in ap)
+        lucro_d=sum(lucro_aposta(a) for a in ap)
         acum3+=lucro_d
         try: data_f=__import__("datetime").datetime.strptime(data_k,"%Y-%m-%d").strftime("%d/%m/%Y")
         except: data_f=data_k
@@ -699,8 +698,8 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         casa=a.get("casa") or "Sem casa"
         if casa not in casas: casas[casa]={"ap":0,"g":0,"stake":0.0,"lucro":0.0}
         c=casas[casa]; c["ap"]+=1; c["stake"]+=float(a["stake"])
-        if a["resultado"]=="ganhou": c["g"]+=1; c["lucro"]+=float(a["stake"])*(float(a["odd"])-1)
-        else: c["lucro"]-=float(a["stake"])
+        if a["resultado"]=="ganhou": c["g"]+=1; c["lucro"]+=lucro_aposta(a)
+        else: c["lucro"]+=lucro_aposta(a)
     wc=wb.create_sheet("Por Casa")
     wc.merge_cells("A1:H1"); wc["A1"]="POR CASA"
     est(wc["A1"],bold=True,bg=DARK,size=14); wc.row_dimensions[1].height=34; wc.row_dimensions[2].height=8
@@ -729,8 +728,8 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         esp=a.get("esporte") or "Sem esporte"
         if esp not in esportes: esportes[esp]={"ap":0,"g":0,"stake":0.0,"lucro":0.0}
         e=esportes[esp]; e["ap"]+=1; e["stake"]+=float(a["stake"])
-        if a["resultado"]=="ganhou": e["g"]+=1; e["lucro"]+=float(a["stake"])*(float(a["odd"])-1)
-        else: e["lucro"]-=float(a["stake"])
+        if a["resultado"]=="ganhou": e["g"]+=1; e["lucro"]+=lucro_aposta(a)
+        else: e["lucro"]+=lucro_aposta(a)
     we=wb.create_sheet("Por Esporte")
     we.merge_cells("A1:H1"); we["A1"]="POR ESPORTE"
     est(we["A1"],bold=True,bg=DARK,size=14); we.row_dimensions[1].height=34; we.row_dimensions[2].height=8
@@ -771,7 +770,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ws2.row_dimensions[3].height=22
     for i,((ano,num),ap) in enumerate(sorted(por_sem.items())):
         er=4+i; rb=WHITE if i%2==0 else ALT
-        lucro_s=sum(float(a["stake"])*(float(a["odd"])-1) if a["resultado"]=="ganhou" else -float(a["stake"]) for a in ap)
+        lucro_s=sum(lucro_aposta(a) for a in ap)
         stake_s=sum(float(a["stake"]) for a in ap)
         g_s=sum(1 for a in ap if a["resultado"]=="ganhou")
         roi_s=lucro_s/stake_s if stake_s else 0
