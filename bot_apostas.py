@@ -302,12 +302,15 @@ async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     progressao  = lucro_total / BANCA_INICIAL
     sinal       = "+" if lucro_total >= 0 else ""
     emoji       = "📈" if lucro_total >= 0 else "📉"
+    pendentes_ap = [a for a in apostas if a["resultado"] == "pendente"]
+    stake_curso  = sum(float(a["stake"]) for a in pendentes_ap)
     await update.message.reply_text(
         f"{emoji} *Resultados Gerais*\n\n"
         f"💰 Lucro Total: *{sinal}R$ {lucro_total:.2f}*\n"
         f"📊 ROI: *{roi:+.1%}*\n"
         f"💹 Progressão: *{progressao:+.2%}*\n"
-        f"🏆 {vitorias}V / {len(res)-vitorias}D\n\n"
+        f"🏆 {vitorias}V / {len(res)-vitorias}D\n"
+        f"⏳ Stake em curso: *R$ {stake_curso:.2f}* ({len(pendentes_ap)} apostas)\n\n"
         f"📅 Digite uma data (DD/MM) para ver aquele dia\n"
         f"🏦 *Por Casa* para ver por casa\n"
         f"🔙 *Voltar* para sair",
@@ -609,6 +612,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     est(ws["A1"], bold=True, bg=DARK, size=16); ws.row_dimensions[1].height = 40
     ws.row_dimensions[2].height = 8
 
+    stake_curso = sum(float(a["stake"]) for a in apostas if a["resultado"]=="pendente")
     cards = [
         ("Total",str(total),DARK),("Resolvidas",str(resolvidas),DARK),
         ("Pendentes",str(pendentes),AMBER if pendentes else DARK),
@@ -616,6 +620,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ("Lucro",f"R$ {lucro_total:.2f}",GREEN if lucro_total>=0 else RED),
         ("ROI",f"{roi:+.1%}",GREEN if roi>=0 else RED),
         ("Progressao",f"{progressao:+.2%}",GREEN if progressao>=0 else RED),
+        ("Em Curso",f"R$ {stake_curso:.2f}",AMBER if stake_curso>0 else DARK),
     ]
     for i,(label,val,bg) in enumerate(cards,1):
         c=ws.cell(row=3,column=i,value=label); est(c,bg=bg,size=9,fc="DBEAFE"); ws.row_dimensions[3].height=20
