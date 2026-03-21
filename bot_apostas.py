@@ -377,7 +377,7 @@ CAMPOS_EDITAVEIS = ["data","horario","descricao","odd","stake","esporte","casa",
 CAMPOS_LABEL     = {
     "data":"📅 Data","horario":"⏰ Horário","descricao":"🏷 Descrição",
     "odd":"🔢 Odd","stake":"💰 Stake","esporte":"🏅 Esporte",
-    "casa":"🏦 Casa","resultado":"📊 Resultado","cashout":"💸 Cashout"
+    "casa":"🏦 Casa","resultado":"📊 Resultado","cashout":"💸 Cashout","freebet":"🎁 Freebet"
 }
 
 async def editar_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
