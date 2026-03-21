@@ -526,11 +526,15 @@ async def exportar_csv(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     apostas   = carregar()
     total     = len(apostas)
     pendentes = sum(1 for a in apostas if a["resultado"] == "pendente")
-    linhas    = ["id,data,horario,descricao,odd,stake,resultado,casa,esporte"]
+    import io
+    output = io.StringIO()
+    import csv as csv_mod
+    writer = csv_mod.writer(output, quoting=csv_mod.QUOTE_ALL)
+    writer.writerow(["id","data","horario","descricao","odd","stake","resultado","casa","esporte"])
     for a in apostas:
         data = a["data"].strftime("%Y-%m-%d") if hasattr(a["data"],"strftime") else str(a["data"])
-        linhas.append(f"{a['id']},{data},{a.get('horario','')},{a['descricao']},{a['odd']},{a['stake']},{a['resultado']},{a.get('casa','')},{a.get('esporte','')}")
-    csv_bytes = "\n".join(linhas).encode("utf-8")
+        writer.writerow([a["id"],data,a.get("horario",""),a["descricao"],a["odd"],a["stake"],a["resultado"],a.get("casa",""),a.get("esporte","")])
+    csv_bytes = output.getvalue().encode("utf-8")
     caption   = f"\U0001f4ca apostas.csv\n{total} apostas | {pendentes} pendentes"
     await update.message.reply_document(document=InputFile(csv_bytes, filename="apostas.csv"), caption=caption)
 
