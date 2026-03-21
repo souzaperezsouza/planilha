@@ -1,4 +1,5 @@
 import os
+import io
 import logging
 import threading
 import psycopg2
@@ -35,7 +36,7 @@ def teclado_menu():
     return ReplyKeyboardMarkup([
         ["📝 Nova aposta",   "⏳ Ver pendentes"],
         ["📈 Resultados",    "✏️ Editar aposta"],
-        ["📤 Exportar CSV"],
+        ["📊 Gerar Dashboard"],
     ], resize_keyboard=True)
 
 def teclado_cancelar():
@@ -143,7 +144,7 @@ async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if txt == "⏳ Ver pendentes":   return await ver_pendentes(update, ctx)
     if txt == "📈 Resultados":      return await resultados(update, ctx)
     if txt == "✏️ Editar aposta":   return await editar_inicio(update, ctx)
-    if txt == "📤 Exportar CSV":    return await exportar_csv(update, ctx)
+    if txt == "📊 Gerar Dashboard":  return await gerar_dashboard(update, ctx)
 
 # ── NOVA APOSTA ───────────────────────────────────────────────────────────────
 async def nova_aposta_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -520,6 +521,274 @@ async def aplicar_edicao(update, ctx, id_alvo, campo, novo_valor):
         exibe = f"{float(novo_valor):.2f}"
     await update.message.reply_text(f"✅ *Aposta #{id_alvo} atualizada!*\n{label} → *{exibe}*", parse_mode="Markdown")
     return await voltar_menu(update, ctx)
+
+
+# ── GERAR DASHBOARD ───────────────────────────────────────────────────────────
+async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⏳ Gerando dashboard, aguarde...")
+
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.chart import LineChart, Reference
+    from openpyxl.utils import get_column_letter
+    from datetime import timedelta
+
+    apostas = carregar()
+    apostas_ord = sorted(apostas, key=lambda a: (str(a["data"]), a.get("horario") or "", int(a["id"])))
+    df_res = [a for a in apostas_ord if a["resultado"] in ("ganhou","perdeu")]
+
+    BANCA = 5000
+    DARK  = "1E293B"; GREEN = "16A34A"; RED = "DC2626"; AMBER = "D97706"
+    WHITE = "FFFFFF"; ALT   = "EFF6FF"; BORDER_C = "CBD5E1"
+
+    def est(cell, bold=False, fc="FFFFFF", bg=None, size=11, align="center"):
+        cell.font = Font(name="Arial", bold=bold, color=fc, size=size)
+        cell.alignment = Alignment(horizontal=align, vertical="center")
+        if bg: cell.fill = PatternFill("solid", start_color=bg)
+
+    def brd():
+        s = Side(style="thin", color=BORDER_C)
+        return Border(left=s, right=s, top=s, bottom=s)
+
+    def cor(val):
+        try: return GREEN if float(val) >= 0 else RED
+        except: return "000000"
+
+    # Métricas
+    lucro_total = sum(
+        float(a["stake"])*(float(a["odd"])-1) if a["resultado"]=="ganhou" else -float(a["stake"])
+        for a in df_res
+    )
+    stake_total = sum(float(a["stake"]) for a in df_res)
+    vitorias    = sum(1 for a in df_res if a["resultado"]=="ganhou")
+    win_rate    = vitorias/len(df_res) if df_res else 0
+    roi         = lucro_total/stake_total if stake_total else 0
+    progressao  = lucro_total/BANCA
+    total       = len(apostas)
+    resolvidas  = len(df_res)
+    pendentes   = total - resolvidas
+
+    # Banca acumulada
+    banca_acum = []
+    acum = 0
+    for a in df_res:
+        acum += float(a["stake"])*(float(a["odd"])-1) if a["resultado"]=="ganhou" else -float(a["stake"])
+        banca_acum.append(acum)
+
+    wb = openpyxl.Workbook()
+
+    # ── ABA 1: DASHBOARD ──
+    ws = wb.active; ws.title = "Dashboard"
+    ws.merge_cells("A1:L1"); ws["A1"] = "DASHBOARD DE APOSTAS"
+    est(ws["A1"], bold=True, bg=DARK, size=16); ws.row_dimensions[1].height = 40
+    ws.row_dimensions[2].height = 8
+
+    cards = [
+        ("Total",str(total),DARK),("Resolvidas",str(resolvidas),DARK),
+        ("Pendentes",str(pendentes),AMBER if pendentes else DARK),
+        ("Win Rate",f"{win_rate:.1%}",GREEN if win_rate>=0.5 else RED),
+        ("Lucro",f"R$ {lucro_total:.2f}",GREEN if lucro_total>=0 else RED),
+        ("ROI",f"{roi:+.1%}",GREEN if roi>=0 else RED),
+        ("Progressao",f"{progressao:+.2%}",GREEN if progressao>=0 else RED),
+    ]
+    for i,(label,val,bg) in enumerate(cards,1):
+        c=ws.cell(row=3,column=i,value=label); est(c,bg=bg,size=9,fc="DBEAFE"); ws.row_dimensions[3].height=20
+        v=ws.cell(row=4,column=i,value=val);   est(v,bold=True,bg=bg,size=13);  ws.row_dimensions[4].height=32
+        d=ws.cell(row=5,column=i);              est(d,bg="0F172A");              ws.row_dimensions[5].height=4
+    ws.row_dimensions[6].height=10
+
+    HDR=7; DAT=8
+    headers=["#","Data","Hora","Descricao","Odd","Stake","Esporte","Casa","Resultado","Lucro","Banca","Progressao"]
+    ws.row_dimensions[HDR].height=22
+    for c,h in enumerate(headers,1):
+        cell=ws.cell(row=HDR,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
+
+    acum2=0
+    for i,a in enumerate(apostas_ord):
+        er=DAT+i; ws.row_dimensions[er].height=18
+        rb=WHITE if i%2==0 else ALT
+        res=a["resultado"]
+        lucro_a=banca_a=prog_a=""
+        if res in ("ganhou","perdeu"):
+            lucro_a=float(a["stake"])*(float(a["odd"])-1) if res=="ganhou" else -float(a["stake"])
+            acum2+=lucro_a; banca_a=round(acum2,2); prog_a=round(acum2/BANCA,4)
+        res_d={"ganhou":"Ganhou","perdeu":"Perdeu","void":"Void","pendente":"Pendente"}.get(res,res)
+        data_fmt=a["data"].strftime("%d/%m/%Y") if hasattr(a["data"],"strftime") else str(a["data"])[:10]
+        vals=[a["id"],data_fmt,a.get("horario",""),a["descricao"],a["odd"],a["stake"],
+              a.get("esporte",""),a.get("casa",""),res_d,lucro_a,banca_a,prog_a]
+        for c,val in enumerate(vals,1):
+            cell=ws.cell(row=er,column=c,value=val)
+            fc="000000"
+            if c in (10,11) and val!="": fc=cor(val)
+            if c==12 and val!="": fc=cor(val)
+            cell.font=Font(name="Arial",size=10,color=fc)
+            cell.alignment=Alignment(horizontal="left" if c==4 else "center",vertical="center")
+            cell.fill=PatternFill("solid",start_color=rb); cell.border=brd()
+            if c in (5,6,10,11) and val!="": cell.number_format="#,##0.00"
+            if c==12 and val!="": cell.number_format="+0.00%;-0.00%;0.00%"
+
+    tr=DAT+len(apostas_ord); ws.row_dimensions[tr].height=20
+    for c in range(1,13):
+        cell=ws.cell(row=tr,column=c)
+        if c==4: cell.value="TOTAL"
+        elif c==6: cell.value=f"=SUM(F{DAT}:F{tr-1})"; cell.number_format="#,##0.00"
+        elif c==10: cell.value=f"=SUM(J{DAT}:J{tr-1})"; cell.number_format="#,##0.00"
+        est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
+
+    widths=[5,12,7,34,7,11,14,14,12,12,14,13]
+    for i,w in enumerate(widths,1): ws.column_dimensions[get_column_letter(i)].width=w
+
+    # ── ABA 2: LUCRO POR DIA ──
+    from collections import defaultdict
+    por_dia=defaultdict(list)
+    for a in df_res:
+        por_dia[str(a["data"])[:10]].append(a)
+    wd=wb.create_sheet("Lucro por Dia")
+    wd.merge_cells("A1:D1"); wd["A1"]="LUCRO POR DIA"
+    est(wd["A1"],bold=True,bg=DARK,size=14); wd.row_dimensions[1].height=34; wd.row_dimensions[2].height=8
+    for c,h in enumerate(["Data","Apostas","Lucro do Dia","Acumulado"],1):
+        cell=wd.cell(row=3,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
+    wd.row_dimensions[3].height=22
+    acum3=0
+    for i,(data_k,ap) in enumerate(sorted(por_dia.items())):
+        er=4+i; rb=WHITE if i%2==0 else ALT
+        lucro_d=sum(float(a["stake"])*(float(a["odd"])-1) if a["resultado"]=="ganhou" else -float(a["stake"]) for a in ap)
+        acum3+=lucro_d
+        try: data_f=__import__("datetime").datetime.strptime(data_k,"%Y-%m-%d").strftime("%d/%m/%Y")
+        except: data_f=data_k
+        for c,val in enumerate([data_f,len(ap),lucro_d,acum3],1):
+            cell=wd.cell(row=er,column=c,value=val); fc="000000"
+            if c in (3,4): fc=cor(val)
+            cell.font=Font(name="Arial",size=10,color=fc)
+            cell.alignment=Alignment(horizontal="center",vertical="center")
+            cell.fill=PatternFill("solid",start_color=rb); cell.border=brd()
+            if c in (3,4): cell.number_format="#,##0.00"
+        wd.row_dimensions[er].height=18
+    for i,w in enumerate([14,10,18,18],1): wd.column_dimensions[get_column_letter(i)].width=w
+
+    # ── ABA 3: POR CASA ──
+    casas={}
+    for a in df_res:
+        casa=a.get("casa") or "Sem casa"
+        if casa not in casas: casas[casa]={"ap":0,"g":0,"stake":0.0,"lucro":0.0}
+        c=casas[casa]; c["ap"]+=1; c["stake"]+=float(a["stake"])
+        if a["resultado"]=="ganhou": c["g"]+=1; c["lucro"]+=float(a["stake"])*(float(a["odd"])-1)
+        else: c["lucro"]-=float(a["stake"])
+    wc=wb.create_sheet("Por Casa")
+    wc.merge_cells("A1:H1"); wc["A1"]="POR CASA"
+    est(wc["A1"],bold=True,bg=DARK,size=14); wc.row_dimensions[1].height=34; wc.row_dimensions[2].height=8
+    for c,h in enumerate(["Casa","Apostas","Ganhou","Perdeu","Stake","Lucro","ROI","Win Rate"],1):
+        cell=wc.cell(row=3,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
+    wc.row_dimensions[3].height=22
+    for i,(nome,c) in enumerate(sorted(casas.items(),key=lambda x:-x[1]["lucro"])):
+        er=4+i; rb=WHITE if i%2==0 else ALT
+        roi_c=c["lucro"]/c["stake"] if c["stake"] else 0
+        wr_c=c["g"]/c["ap"] if c["ap"] else 0
+        for col,val in enumerate([nome,c["ap"],c["g"],c["ap"]-c["g"],c["stake"],c["lucro"],roi_c,wr_c],1):
+            cell=wc.cell(row=er,column=col,value=val); fc="000000"
+            if col==6: fc=cor(val)
+            if col==7: fc=cor(val)
+            cell.font=Font(name="Arial",size=10,color=fc)
+            cell.alignment=Alignment(horizontal="left" if col==1 else "center",vertical="center")
+            cell.fill=PatternFill("solid",start_color=rb); cell.border=brd()
+            if col in (5,6): cell.number_format="#,##0.00"
+            if col in (7,8): cell.number_format="+0.0%;-0.0%;0.0%"
+        wc.row_dimensions[er].height=18
+    for i,w in enumerate([18,10,10,10,14,14,10,12],1): wc.column_dimensions[get_column_letter(i)].width=w
+
+    # ── ABA 4: POR ESPORTE ──
+    esportes={}
+    for a in df_res:
+        esp=a.get("esporte") or "Sem esporte"
+        if esp not in esportes: esportes[esp]={"ap":0,"g":0,"stake":0.0,"lucro":0.0}
+        e=esportes[esp]; e["ap"]+=1; e["stake"]+=float(a["stake"])
+        if a["resultado"]=="ganhou": e["g"]+=1; e["lucro"]+=float(a["stake"])*(float(a["odd"])-1)
+        else: e["lucro"]-=float(a["stake"])
+    we=wb.create_sheet("Por Esporte")
+    we.merge_cells("A1:H1"); we["A1"]="POR ESPORTE"
+    est(we["A1"],bold=True,bg=DARK,size=14); we.row_dimensions[1].height=34; we.row_dimensions[2].height=8
+    for c,h in enumerate(["Esporte","Apostas","Ganhou","Perdeu","Stake","Lucro","ROI","Win Rate"],1):
+        cell=we.cell(row=3,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
+    we.row_dimensions[3].height=22
+    for i,(nome,e) in enumerate(sorted(esportes.items(),key=lambda x:-x[1]["lucro"])):
+        er=4+i; rb=WHITE if i%2==0 else ALT
+        roi_e=e["lucro"]/e["stake"] if e["stake"] else 0
+        wr_e=e["g"]/e["ap"] if e["ap"] else 0
+        for col,val in enumerate([nome,e["ap"],e["g"],e["ap"]-e["g"],e["stake"],e["lucro"],roi_e,wr_e],1):
+            cell=we.cell(row=er,column=col,value=val); fc="000000"
+            if col==6: fc=cor(val)
+            if col==7: fc=cor(val)
+            cell.font=Font(name="Arial",size=10,color=fc)
+            cell.alignment=Alignment(horizontal="left" if col==1 else "center",vertical="center")
+            cell.fill=PatternFill("solid",start_color=rb); cell.border=brd()
+            if col in (5,6): cell.number_format="#,##0.00"
+            if col in (7,8): cell.number_format="+0.0%;-0.0%;0.0%"
+        we.row_dimensions[er].height=18
+    for i,w in enumerate([18,10,10,10,14,14,10,12],1): we.column_dimensions[get_column_letter(i)].width=w
+
+    # ── ABA 5: POR SEMANA ──
+    def semana_num(dt):
+        if hasattr(dt,"strftime"): d=dt
+        else: d=__import__("datetime").datetime.strptime(str(dt)[:10],"%Y-%m-%d")
+        dom=d-timedelta(days=(d.weekday()+1)%7)
+        return dom.isocalendar()[0],dom.isocalendar()[1]
+    por_sem=defaultdict(list)
+    for a in df_res:
+        ano,num=semana_num(a["data"])
+        por_sem[(ano,num)].append(a)
+    ws2=wb.create_sheet("Por Semana")
+    ws2.merge_cells("A1:H1"); ws2["A1"]="POR SEMANA"
+    est(ws2["A1"],bold=True,bg=DARK,size=14); ws2.row_dimensions[1].height=34; ws2.row_dimensions[2].height=8
+    for c,h in enumerate(["Semana","Periodo","Apostas","Ganhou","Perdeu","Stake","Lucro","ROI"],1):
+        cell=ws2.cell(row=3,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
+    ws2.row_dimensions[3].height=22
+    for i,((ano,num),ap) in enumerate(sorted(por_sem.items())):
+        er=4+i; rb=WHITE if i%2==0 else ALT
+        lucro_s=sum(float(a["stake"])*(float(a["odd"])-1) if a["resultado"]=="ganhou" else -float(a["stake"]) for a in ap)
+        stake_s=sum(float(a["stake"]) for a in ap)
+        g_s=sum(1 for a in ap if a["resultado"]=="ganhou")
+        roi_s=lucro_s/stake_s if stake_s else 0
+        import datetime as dt_mod
+        jan1=dt_mod.datetime(ano,1,1); iso1=jan1.isocalendar()
+        primeira_seg=jan1-timedelta(days=iso1[2]-1)
+        seg=primeira_seg+timedelta(weeks=num-1); dom=seg-timedelta(days=1); sab=dom+timedelta(days=6)
+        periodo=f"{dom.strftime('%d/%m')} - {sab.strftime('%d/%m/%Y')}"
+        for col,val in enumerate([f"Semana {num}",periodo,len(ap),g_s,len(ap)-g_s,stake_s,lucro_s,roi_s],1):
+            cell=ws2.cell(row=er,column=col,value=val); fc="000000"
+            if col==7: fc=cor(val)
+            if col==8: fc=cor(val)
+            cell.font=Font(name="Arial",size=10,color=fc)
+            cell.alignment=Alignment(horizontal="left" if col==2 else "center",vertical="center")
+            cell.fill=PatternFill("solid",start_color=rb); cell.border=brd()
+            if col in (6,7): cell.number_format="#,##0.00"
+            if col==8: cell.number_format="+0.0%;-0.0%;0.0%"
+        ws2.row_dimensions[er].height=18
+    for i,w in enumerate([12,22,10,10,10,14,14,10],1): ws2.column_dimensions[get_column_letter(i)].width=w
+
+    # ── ABA 6: GRAFICO ──
+    wg=wb.create_sheet("Evolucao da Banca")
+    wg["A1"]="Aposta #"; wg["B1"]="Banca Acumulada"
+    for i,(val) in enumerate(banca_acum,2):
+        wg.cell(row=i,column=1,value=i-1); wg.cell(row=i,column=2,value=round(val,2))
+    if len(banca_acum)>=2:
+        chart=LineChart(); chart.title="Evolucao da Banca"; chart.style=10
+        chart.y_axis.title="R$"; chart.x_axis.title="Aposta #"
+        chart.y_axis.numFmt="#,##0.00"; chart.width=26; chart.height=14
+        dr=Reference(wg,min_col=2,min_row=1,max_row=len(banca_acum)+1)
+        cr=Reference(wg,min_col=1,min_row=2,max_row=len(banca_acum)+1)
+        chart.add_data(dr,titles_from_data=True); chart.set_categories(cr)
+        chart.series[0].graphicalProperties.line.solidFill="2563EB"
+        chart.series[0].graphicalProperties.line.width=22000
+        wg.add_chart(chart,"D2")
+
+    # Salvar na memória e enviar
+    buf=io.BytesIO(); wb.save(buf); buf.seek(0)
+    from datetime import datetime as dt2
+    nome_arq=f"dashboard_{dt2.now().strftime('%d%m%Y_%H%M')}.xlsx"
+    await update.message.reply_document(
+        document=InputFile(buf, filename=nome_arq),
+        caption=f"Dashboard gerado! {total} apostas | R$ {lucro_total:.2f} lucro | ROI {roi:+.1%}"
+    )
 
 # ── EXPORTAR CSV ──────────────────────────────────────────────────────────────
 async def exportar_csv(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
