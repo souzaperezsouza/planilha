@@ -310,7 +310,8 @@ async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"📊 ROI: *{roi:+.1%}*\n"
         f"💹 Progressão: *{progressao:+.2%}*\n"
         f"🏆 {vitorias}V / {len(res)-vitorias}D\n"
-        f"⏳ Stake em curso: *R$ {stake_curso:.2f}* ({len(pendentes_ap)} apostas)\n\n"
+        f"⏳ Stake em curso: *R$ {stake_curso:.2f}* ({len(pendentes_ap)} apostas)\n"
+        f"📏 Unidades: *{lucro_total/50:+.2f}u*\n\n"
         f"📅 Digite uma data (DD/MM) para ver aquele dia\n"
         f"🏦 *Por Casa* para ver por casa\n"
         f"🔙 *Voltar* para sair",
