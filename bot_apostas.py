@@ -17,7 +17,7 @@ DATABASE_URL  = os.environ.get("DATABASE_URL", "postgresql://apostas_db_br3e_use
 BANCA_INICIAL = 5000
 
 CASAS = ["Bet365","Betano","SportingBet","Novibet","Vaidebet","Betfast","BETesporte",
-         "Betao","Betnacional","BetFair","Stake","Pagol","Vupi","Outra"]
+         "Betnacional","BetFair","Stake","Pagol","Esportes Da Sorte","Gol De Bet","Outra"]
 
 ESPORTES = ["⚽ Futebol","🏀 Basquete","🎾 Tênis","🏒 Hóquei",
             "🏈 Futebol Americano","⚾ Beisebol","🥊 MMA/Boxe","🏐 Vôlei","Outro"]
@@ -106,6 +106,9 @@ def buscar_por_id(id_aposta):
     return dict(row) if row else None
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
+def normalizar_casa(s):
+    return (s or "").strip().title() or "Sem casa"
+
 def lucro_aposta(a):
     freebet = str(a.get("freebet","nao")).strip().lower() == "sim"
     if a["resultado"] == "ganhou":
@@ -323,7 +326,7 @@ async def resultados_por_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     res     = [a for a in apostas if a["resultado"] in ("ganhou","perdeu")]
     casas   = {}
     for a in res:
-        casa = a.get("casa") or "Sem casa"
+        casa = normalizar_casa(a.get("casa"))
         if casa not in casas:
             casas[casa] = {"ap":0,"g":0,"stake":0.0,"lucro":0.0}
         c = casas[casa]; c["ap"] += 1; c["stake"] += float(a["stake"])
@@ -701,7 +704,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # ── ABA 3: POR CASA ──
     casas={}
     for a in df_res:
-        casa=a.get("casa") or "Sem casa"
+        casa=normalizar_casa(a.get("casa"))
         if casa not in casas: casas[casa]={"ap":0,"g":0,"stake":0.0,"lucro":0.0}
         c=casas[casa]; c["ap"]+=1; c["stake"]+=float(a["stake"])
         if a["resultado"]=="ganhou": c["g"]+=1; c["lucro"]+=lucro_aposta(a)
