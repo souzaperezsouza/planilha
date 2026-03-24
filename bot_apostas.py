@@ -63,12 +63,12 @@ def inicializar_db():
                     resultado VARCHAR(10) DEFAULT 'pendente',
                     casa      VARCHAR(50),
                     esporte   VARCHAR(50),
-                    freebet   VARCHAR(3) DEFAULT 'nao'
+                    freebet   NUMERIC(10,2) DEFAULT 0
                 )
             """)
             # Adicionar coluna se não existir (migração)
             cur.execute("""
-                ALTER TABLE apostas ADD COLUMN IF NOT EXISTS freebet VARCHAR(3) DEFAULT 'nao'
+                ALTER TABLE apostas ADD COLUMN IF NOT EXISTS freebet NUMERIC(10,2) DEFAULT 0
             """)
         conn.commit()
 
@@ -85,7 +85,7 @@ def inserir(a):
                 INSERT INTO apostas (data,horario,descricao,odd,stake,resultado,casa,esporte,freebet)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
             """, (a["data"],a["horario"],a["descricao"],a["odd"],a["stake"],
-                  a["resultado"],a["casa"],a["esporte"],a.get("freebet","nao")))
+                  a["resultado"],a["casa"],a["esporte"],float(a.get("freebet") or 0)))
             new_id = cur.fetchone()[0]
         conn.commit()
     return new_id
@@ -110,11 +110,18 @@ def normalizar_casa(s):
     return (s or "").strip().title() or "Sem casa"
 
 def lucro_aposta(a):
-    freebet = str(a.get("freebet","nao")).strip().lower() == "sim"
+    stake   = float(a["stake"])
+    odd     = float(a["odd"])
+    try:
+        freebet = float(a.get("freebet") or 0)
+    except:
+        freebet = stake if str(a.get("freebet","")).strip().lower() == "sim" else 0.0
+    freebet = min(freebet, stake)  # nunca maior que stake
     if a["resultado"] == "ganhou":
-        return float(a["stake"]) * (float(a["odd"]) - 1)
+        lucro_bruto = stake * (odd - 1)
+        return lucro_bruto - freebet
     if a["resultado"] == "perdeu":
-        return 0.0 if freebet else -float(a["stake"])
+        return -(stake - freebet)
     return 0.0
 
 async def voltar_menu(update, ctx):
@@ -384,7 +391,7 @@ CAMPOS_EDITAVEIS = ["data","horario","descricao","odd","stake","esporte","casa",
 CAMPOS_LABEL     = {
     "data":"📅 Data","horario":"⏰ Horário","descricao":"🏷 Descrição",
     "odd":"🔢 Odd","stake":"💰 Stake","esporte":"🏅 Esporte",
-    "casa":"🏦 Casa","resultado":"📊 Resultado","cashout":"💸 Cashout","freebet":"🎁 Freebet"
+    "casa":"🏦 Casa","resultado":"📊 Resultado","cashout":"💸 Cashout","freebet":"🎁 Freebet (R$)"
 }
 
 async def editar_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -422,7 +429,7 @@ async def editar_receber_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     hora = f" {aposta.get('horario','')}" if aposta.get("horario") else ""
     info = (f"✏️ *Aposta #{id_alvo}*\n\n📅 {data_fmt}{hora}\n🏷 {aposta['descricao']}\n"
             f"🔢 Odd: {aposta['odd']}\n💰 Stake: R$ {float(aposta['stake']):.2f}\n"
-            f"🏦 Casa: {aposta.get('casa','')}\n📊 Resultado: {aposta['resultado']}\n\n*Qual campo editar?*")
+            f"🏦 Casa: {aposta.get('casa','')}\n📊 Resultado: {aposta['resultado']}\n🎁 Freebet: R$ {float(aposta.get('freebet') or 0):.2f}\n\n*Qual campo editar?*")
     teclado = [[CAMPOS_LABEL[c]] for c in CAMPOS_EDITAVEIS] + [[CANCELAR_BTN]]
     await update.message.reply_text(info,
         reply_markup=ReplyKeyboardMarkup(teclado, resize_keyboard=True, one_time_keyboard=True),
@@ -456,12 +463,14 @@ async def editar_receber_campo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown")
         return EDITAR_CASA
     if campo == "freebet":
-        teclado_fb = [["✅ Sim, foi freebet","❌ Não foi freebet"],[CANCELAR_BTN]]
+        aposta_atual = buscar_por_id(ctx.user_data["editar_id"])
+        stake_atual  = float(aposta_atual["stake"])
         await update.message.reply_text(
-            "🎁 *Freebet?*\nEssa aposta foi uma freebet?",
-            reply_markup=ReplyKeyboardMarkup(teclado_fb, resize_keyboard=True, one_time_keyboard=True),
-            parse_mode="Markdown")
-        return EDITAR_CASA
+            f"🎁 *Freebet*\nDigite o valor em R$ que foi freebet nessa aposta.\n"
+            f"Stake total: R$ {stake_atual:.2f}\n"
+            f"Digite *0* para remover freebet:",
+            reply_markup=teclado_cancelar(), parse_mode="Markdown")
+        return EDITAR_VALOR
     if campo == "cashout":
         await update.message.reply_text(
             "💸 *Cashout*\nDigite o valor que voce *recebeu* de volta (R$):\n"
@@ -491,11 +500,18 @@ async def editar_receber_valor(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 return EDITAR_VALOR
     elif campo == "horario":
         novo_valor = datetime.now().strftime("%H:%M") if raw == "0" else raw
-    elif campo in ("odd","stake","cashout"):
+    elif campo in ("odd","stake","cashout","freebet"):
         try: novo_valor = float(raw.replace(",","."))
         except ValueError:
             await update.message.reply_text("❌ Digite um número:")
             return EDITAR_VALOR
+        if campo == "freebet":
+            aposta_atual = buscar_por_id(id_alvo)
+            stake_atual  = float(aposta_atual["stake"])
+            if novo_valor > stake_atual:
+                await update.message.reply_text(
+                    f"❌ Freebet não pode ser maior que o stake (R$ {stake_atual:.2f}). Digite novamente:")
+                return EDITAR_VALOR
         if campo == "cashout":
             aposta   = buscar_por_id(id_alvo)
             stake    = float(aposta["stake"])
@@ -524,12 +540,7 @@ async def editar_receber_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         mapa = {"✅ Ganhou":"ganhou","❌ Perdeu":"perdeu","↩️ Void":"void","⏳ Pendente":"pendente"}
         valor = mapa.get(raw, raw)
         return await aplicar_edicao(update, ctx, id_alvo, "resultado", valor)
-    if campo == "freebet":
-        valor = "sim" if raw == "✅ Sim, foi freebet" else "nao"
-        return await aplicar_edicao(update, ctx, id_alvo, "freebet", valor)
-    if campo == "freebet":
-        valor = True if raw == "✅ Sim, foi freebet" else False
-        return await aplicar_edicao(update, ctx, id_alvo, "freebet", valor)
+
     if raw == "Outra" or raw == "Outro":
         await update.message.reply_text("Digite o nome:", reply_markup=teclado_cancelar())
         ctx.user_data["editar_campo"] = campo + "_custom"
