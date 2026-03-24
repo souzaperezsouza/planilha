@@ -116,12 +116,11 @@ def lucro_aposta(a):
         freebet = float(a.get("freebet") or 0)
     except:
         freebet = stake if str(a.get("freebet","")).strip().lower() == "sim" else 0.0
-    freebet = min(freebet, stake)  # nunca maior que stake
+    freebet = min(freebet, stake)
     if a["resultado"] == "ganhou":
-        lucro_bruto = stake * (odd - 1)
-        return lucro_bruto - freebet
+        return stake * (odd - 1)  # freebet nao afeta o green
     if a["resultado"] == "perdeu":
-        return -(stake - freebet)
+        return -(stake - freebet)  # freebet reduz o prejuizo
     return 0.0
 
 async def voltar_menu(update, ctx):
