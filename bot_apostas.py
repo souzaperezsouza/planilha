@@ -109,6 +109,12 @@ def buscar_por_id(id_aposta):
 def normalizar_casa(s):
     return (s or "").strip().title() or "Sem casa"
 
+MAPA_ESPORTE = {"futebol":"⚽ Futebol","basquete":"🏀 Basquete","tenis":"🎾 Tênis","tênis":"🎾 Tênis","hoquei":"🏒 Hóquei","hóquei":"🏒 Hóquei","ice hockey":"🏒 Hóquei","basketball":"🏀 Basquete","football":"⚽ Futebol","tennis":"🎾 Tênis"}
+
+def normalizar_esporte(s):
+    if not s: return ""
+    return MAPA_ESPORTE.get(s.strip().lower(), s.strip())
+
 def lucro_aposta(a):
     stake   = float(a["stake"])
     odd     = float(a["odd"])
@@ -390,7 +396,7 @@ CAMPOS_EDITAVEIS = ["data","horario","descricao","odd","stake","esporte","casa",
 CAMPOS_LABEL     = {
     "data":"📅 Data","horario":"⏰ Horário","descricao":"🏷 Descrição",
     "odd":"🔢 Odd","stake":"💰 Stake","esporte":"🏅 Esporte",
-    "casa":"🏦 Casa","resultado":"📊 Resultado","cashout":"💸 Cashout","freebet":"🎁 Freebet (R$)"
+    "casa":"🏦 Casa","resultado":"📊 Resultado","cashout":"💸 Cashout","freebet":"🎁 Freebet (R$)","deletar":"🗑 Deletar aposta"
 }
 
 async def editar_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -428,7 +434,7 @@ async def editar_receber_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     hora = f" {aposta.get('horario','')}" if aposta.get("horario") else ""
     info = (f"✏️ *Aposta #{id_alvo}*\n\n📅 {data_fmt}{hora}\n🏷 {aposta['descricao']}\n"
             f"🔢 Odd: {aposta['odd']}\n💰 Stake: R$ {float(aposta['stake']):.2f}\n"
-            f"🏦 Casa: {aposta.get('casa','')}\n📊 Resultado: {aposta['resultado']}\n🎁 Freebet: R$ {float(aposta.get('freebet') or 0):.2f}\n\n*Qual campo editar?*")
+            f"🏦 Casa: {aposta.get('casa','')}\n📊 Resultado: {aposta['resultado']}\n🎁 Freebet: R$ {float(aposta['freebet'] or 0):.2f}\n\n*Qual campo editar?*")
     teclado = [[CAMPOS_LABEL[c]] for c in CAMPOS_EDITAVEIS] + [[CANCELAR_BTN]]
     await update.message.reply_text(info,
         reply_markup=ReplyKeyboardMarkup(teclado, resize_keyboard=True, one_time_keyboard=True),
@@ -744,7 +750,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # ── ABA 4: POR ESPORTE ──
     esportes={}
     for a in df_res:
-        esp=a.get("esporte") or "Sem esporte"
+        esp=normalizar_esporte(a.get("esporte")) or "Sem esporte"
         if esp not in esportes: esportes[esp]={"ap":0,"g":0,"stake":0.0,"lucro":0.0}
         e=esportes[esp]; e["ap"]+=1; e["stake"]+=float(a["stake"])
         if a["resultado"]=="ganhou": e["g"]+=1; e["lucro"]+=lucro_aposta(a)
