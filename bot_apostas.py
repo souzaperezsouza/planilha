@@ -91,7 +91,7 @@ def inserir(a):
     return new_id
 
 def atualizar_campo(id_aposta, campo, valor):
-    if campo not in {"data","horario","descricao","odd","stake","resultado","casa","esporte"}:
+    if campo not in {"data","horario","descricao","odd","stake","resultado","casa","esporte","freebet"}:
         return
     with conectar() as conn:
         with conn.cursor() as cur:
@@ -104,6 +104,12 @@ def buscar_por_id(id_aposta):
             cur.execute("SELECT * FROM apostas WHERE id=%s", (id_aposta,))
             row = cur.fetchone()
     return dict(row) if row else None
+
+def deletar_aposta(id_aposta):
+    with conectar() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM apostas WHERE id=%s", (id_aposta,))
+        conn.commit()
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 def normalizar_casa(s):
@@ -392,7 +398,7 @@ async def resultados_dia(update: Update, ctx: ContextTypes.DEFAULT_TYPE, raw: st
     return True
 
 # ── EDITAR APOSTA ─────────────────────────────────────────────────────────────
-CAMPOS_EDITAVEIS = ["data","horario","descricao","odd","stake","esporte","casa","resultado","cashout","freebet"]
+CAMPOS_EDITAVEIS = ["data","horario","descricao","odd","stake","esporte","casa","resultado","cashout","freebet","deletar"]
 CAMPOS_LABEL     = {
     "data":"📅 Data","horario":"⏰ Horário","descricao":"🏷 Descrição",
     "odd":"🔢 Odd","stake":"💰 Stake","esporte":"🏅 Esporte",
@@ -476,6 +482,15 @@ async def editar_receber_campo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"Digite *0* para remover freebet:",
             reply_markup=teclado_cancelar(), parse_mode="Markdown")
         return EDITAR_VALOR
+    if campo == "deletar":
+        id_alvo  = ctx.user_data["editar_id"]
+        aposta   = buscar_por_id(id_alvo)
+        descr    = str(aposta["descricao"])[:30] if aposta else "?"
+        await update.message.reply_text(
+            f"🗑 *Deletar Aposta #{id_alvo}*\n_{descr}_\n\n"
+            f"⚠️ Esta ação é *irreversível*. Digite *SIM* para confirmar:",
+            reply_markup=teclado_cancelar(), parse_mode="Markdown")
+        return EDITAR_VALOR
     if campo == "cashout":
         await update.message.reply_text(
             "💸 *Cashout*\nDigite o valor que voce *recebeu* de volta (R$):\n"
@@ -494,6 +509,13 @@ async def editar_receber_valor(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     campo   = ctx.user_data["editar_campo"]
     id_alvo = ctx.user_data["editar_id"]
     novo_valor = None
+    if campo == "deletar":
+        if raw.upper() == "SIM":
+            deletar_aposta(id_alvo)
+            await update.message.reply_text(f"🗑 *Aposta #{id_alvo} deletada com sucesso!*", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("❌ Cancelado. Aposta não deletada.")
+        return await voltar_menu(update, ctx)
     if campo == "data":
         if raw == "0": novo_valor = datetime.now().strftime("%Y-%m-%d")
         else:
@@ -781,8 +803,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     def semana_num(dt):
         if hasattr(dt,"strftime"): d=dt
         else: d=__import__("datetime").datetime.strptime(str(dt)[:10],"%Y-%m-%d")
-        dom=d-timedelta(days=(d.weekday()+1)%7)
-        return dom.isocalendar()[0],dom.isocalendar()[1]
+        return d.isocalendar()[0], d.isocalendar()[1]
     por_sem=defaultdict(list)
     for a in df_res:
         ano,num=semana_num(a["data"])
@@ -802,8 +823,8 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         import datetime as dt_mod
         jan1=dt_mod.datetime(ano,1,1); iso1=jan1.isocalendar()
         primeira_seg=jan1-timedelta(days=iso1[2]-1)
-        seg=primeira_seg+timedelta(weeks=num-1); dom=seg-timedelta(days=1); sab=dom+timedelta(days=6)
-        periodo=f"{dom.strftime('%d/%m')} - {sab.strftime('%d/%m/%Y')}"
+        seg=primeira_seg+timedelta(weeks=num-1); sab=seg+timedelta(days=6)
+        periodo=f"{seg.strftime('%d/%m')} - {sab.strftime('%d/%m/%Y')}"
         for col,val in enumerate([f"Semana {num}",periodo,len(ap),g_s,len(ap)-g_s,stake_s,lucro_s,roi_s],1):
             cell=ws2.cell(row=er,column=col,value=val); fc="000000"
             if col==7: fc=cor(val)
