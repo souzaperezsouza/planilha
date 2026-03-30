@@ -28,6 +28,7 @@ logging.basicConfig(level=logging.WARNING)
 DATA, HORARIO, DESCRICAO, ODD, STAKE, ESPORTE, CASA = range(7)
 ATUALIZAR_ID, ATUALIZAR_RES                         = range(7, 9)
 EDITAR_ID, EDITAR_CAMPO, EDITAR_VALOR, EDITAR_CASA  = range(9, 13)
+MUDAR_UNIDADE_VALOR                                 = 13
 
 CANCELAR_BTN = "❌ Cancelar"
 
@@ -36,14 +37,14 @@ def teclado_menu():
     return ReplyKeyboardMarkup([
         ["📝 Nova aposta",   "⏳ Ver pendentes"],
         ["📈 Resultados",    "✏️ Editar aposta"],
-        ["📊 Gerar Dashboard"],
+        ["📊 Gerar Dashboard", "⚙️ Mudar Unidade"],
     ], resize_keyboard=True)
 
 def teclado_cancelar():
     return ReplyKeyboardMarkup([[CANCELAR_BTN]], resize_keyboard=True)
 
 def teclado_resultados():
-    return ReplyKeyboardMarkup([["🏦 Por Casa", "🔙 Voltar"]], resize_keyboard=True)
+    return ReplyKeyboardMarkup([["🏦 Por Casa", "📅 Por Mês", "🔙 Voltar"]], resize_keyboard=True)
 
 # ── BANCO DE DADOS ────────────────────────────────────────────────────────────
 def conectar():
@@ -63,12 +64,21 @@ def inicializar_db():
                     resultado VARCHAR(10) DEFAULT 'pendente',
                     casa      VARCHAR(50),
                     esporte   VARCHAR(50),
-                    freebet   NUMERIC(10,2) DEFAULT 0
+                    freebet   NUMERIC(10,2) DEFAULT 0,
+                    unidade   NUMERIC(10,2) DEFAULT 50
                 )
             """)
-            # Adicionar coluna se não existir (migração)
+            cur.execute("ALTER TABLE apostas ADD COLUMN IF NOT EXISTS freebet NUMERIC(10,2) DEFAULT 0")
+            cur.execute("ALTER TABLE apostas ADD COLUMN IF NOT EXISTS unidade NUMERIC(10,2) DEFAULT 50")
             cur.execute("""
-                ALTER TABLE apostas ADD COLUMN IF NOT EXISTS freebet NUMERIC(10,2) DEFAULT 0
+                CREATE TABLE IF NOT EXISTS configuracoes (
+                    chave  VARCHAR(50) PRIMARY KEY,
+                    valor  TEXT NOT NULL
+                )
+            """)
+            cur.execute("""
+                INSERT INTO configuracoes (chave, valor) VALUES ('unidade_atual', '50')
+                ON CONFLICT (chave) DO NOTHING
             """)
         conn.commit()
 
@@ -79,13 +89,14 @@ def carregar():
             return [dict(r) for r in cur.fetchall()]
 
 def inserir(a):
+    unidade = get_unidade_atual()
     with conectar() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO apostas (data,horario,descricao,odd,stake,resultado,casa,esporte,freebet)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
+                INSERT INTO apostas (data,horario,descricao,odd,stake,resultado,casa,esporte,freebet,unidade)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
             """, (a["data"],a["horario"],a["descricao"],a["odd"],a["stake"],
-                  a["resultado"],a["casa"],a["esporte"],float(a.get("freebet") or 0)))
+                  a["resultado"],a["casa"],a["esporte"],float(a.get("freebet") or 0),unidade))
             new_id = cur.fetchone()[0]
         conn.commit()
     return new_id
@@ -109,6 +120,22 @@ def deletar_aposta(id_aposta):
     with conectar() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM apostas WHERE id=%s", (id_aposta,))
+        conn.commit()
+
+def get_unidade_atual():
+    with conectar() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT valor FROM configuracoes WHERE chave='unidade_atual'")
+            row = cur.fetchone()
+    return float(row[0]) if row else 50.0
+
+def set_unidade_atual(valor: float):
+    with conectar() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO configuracoes (chave, valor) VALUES ('unidade_atual', %s)
+                ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor
+            """, (str(valor),))
         conn.commit()
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
@@ -163,6 +190,8 @@ async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return await voltar_menu(update, ctx)
         if txt == "🏦 Por Casa":
             return await resultados_por_casa(update, ctx)
+        if txt == "📅 Por Mês":
+            return await resultados_por_mes(update, ctx)
         # Tenta como data
         if await resultados_dia(update, ctx, txt):
             return
@@ -174,6 +203,7 @@ async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if txt == "📈 Resultados":      return await resultados(update, ctx)
     if txt == "✏️ Editar aposta":   return await editar_inicio(update, ctx)
     if txt == "📊 Gerar Dashboard":  return await gerar_dashboard(update, ctx)
+    if txt == "⚙️ Mudar Unidade":   return await mudar_unidade_inicio(update, ctx)
 
 # ── NOVA APOSTA ───────────────────────────────────────────────────────────────
 async def nova_aposta_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -325,15 +355,18 @@ async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     emoji       = "📈" if lucro_total >= 0 else "📉"
     pendentes_ap = [a for a in apostas if a["resultado"] == "pendente"]
     stake_curso  = sum(float(a["stake"]) for a in pendentes_ap)
+    unidade_atual = get_unidade_atual()
+    lucro_unidades = lucro_total / unidade_atual if unidade_atual else 0
     await update.message.reply_text(
         f"{emoji} *Resultados Gerais*\n\n"
         f"💰 Lucro Total: *{sinal}R$ {lucro_total:.2f}*\n"
+        f"📏 Em unidades: *{lucro_unidades:+.2f}u* (1u = R$ {unidade_atual:.0f})\n"
         f"📊 ROI: *{roi:+.1%}*\n"
         f"💹 Progressão: *{progressao:+.2%}*\n"
         f"🏆 {vitorias}V / {len(res)-vitorias}D\n"
-        f"⏳ Stake em curso: *R$ {stake_curso:.2f}* ({len(pendentes_ap)} apostas)\n"
-        f"📏 Unidades: *{lucro_total/50:+.2f}u*\n\n"
+        f"⏳ Stake em curso: *R$ {stake_curso:.2f}* ({len(pendentes_ap)} apostas)\n\n"
         f"📅 Digite uma data (DD/MM) para ver aquele dia\n"
+        f"📅 *Por Mês* para ver o resumo mensal\n"
         f"🏦 *Por Casa* para ver por casa\n"
         f"🔙 *Voltar* para sair",
         reply_markup=teclado_resultados(), parse_mode="Markdown"
@@ -360,6 +393,45 @@ async def resultados_por_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         sinal = "+" if c["lucro"] >= 0 else ""
         linhas.append(f"{emoji} *{nome}*\n  {c['ap']} ap | {c['g']}V/{c['ap']-c['g']}D | {sinal}R$ {c['lucro']:.2f} | ROI: {roi:+.1%}\n")
     linhas.append("\nDigite uma data (DD/MM) ou 🔙 Voltar:")
+    await update.message.reply_text("\n".join(linhas), reply_markup=teclado_resultados(), parse_mode="Markdown")
+
+async def resultados_por_mes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    apostas = carregar()
+    res     = [a for a in apostas if a["resultado"] in ("ganhou","perdeu")]
+    if not res:
+        await update.message.reply_text("Nenhuma aposta resolvida ainda.", reply_markup=teclado_resultados())
+        return
+
+    from collections import defaultdict
+    por_mes = defaultdict(list)
+    for a in res:
+        data_obj = a["data"] if hasattr(a["data"], "strftime") else datetime.strptime(str(a["data"])[:10], "%Y-%m-%d")
+        chave = data_obj.strftime("%Y-%m")
+        por_mes[chave].append(a)
+
+    NOMES_MES = ["","Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
+    linhas = ["📅 *Resultados por Mês:*\n"]
+    acum = 0
+    for chave in sorted(por_mes.keys()):
+        ap  = por_mes[chave]
+        ano, mes = int(chave[:4]), int(chave[5:])
+        lucro_m = sum(lucro_aposta(a) for a in ap)
+        stake_m = sum(float(a["stake"]) for a in ap)
+        g_m     = sum(1 for a in ap if a["resultado"] == "ganhou")
+        roi_m   = lucro_m / stake_m if stake_m else 0
+        acum   += lucro_m
+        emoji_m = "🟢" if lucro_m >= 0 else "🔴"
+        sinal_m = "+" if lucro_m >= 0 else ""
+        # Lucro em unidades usando a unidade de cada aposta individualmente
+        lucro_u = sum(lucro_aposta(a) / float(a.get("unidade") or 50) for a in ap)
+        linhas.append(
+            f"{emoji_m} *{NOMES_MES[mes]}/{ano}*\n"
+            f"  {len(ap)} ap | {g_m}V/{len(ap)-g_m}D | ROI {roi_m:+.1%}\n"
+            f"  Lucro: *{sinal_m}R$ {lucro_m:.2f}* ({lucro_u:+.2f}u)\n"
+        )
+    sinal_ac = "+" if acum >= 0 else ""
+    linhas.append(f"📊 *Acumulado: {sinal_ac}R$ {acum:.2f}*")
+    linhas.append("\nDigite uma data (DD/MM), 🏦 *Por Casa* ou 🔙 *Voltar*:")
     await update.message.reply_text("\n".join(linhas), reply_markup=teclado_resultados(), parse_mode="Markdown")
 
 async def resultados_dia(update: Update, ctx: ContextTypes.DEFAULT_TYPE, raw: str) -> bool:
@@ -594,6 +666,40 @@ async def aplicar_edicao(update, ctx, id_alvo, campo, novo_valor):
     await update.message.reply_text(f"{emoji_conf} *Aposta #{id_alvo} atualizada!*\n{label} → *{exibe}*", parse_mode="Markdown")
     return await voltar_menu(update, ctx)
 
+
+# ── MUDAR UNIDADE ─────────────────────────────────────────────────────────────
+async def mudar_unidade_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    unidade_atual = get_unidade_atual()
+    await update.message.reply_text(
+        f"⚙️ *Mudar Unidade*\n\n"
+        f"Unidade atual: *R$ {unidade_atual:.2f}*\n\n"
+        f"A nova unidade será salva em todas as apostas *a partir de agora*.\n"
+        f"Apostas anteriores mantêm a unidade original no histórico.\n\n"
+        f"Digite o novo valor da unidade em R$:",
+        reply_markup=teclado_cancelar(), parse_mode="Markdown"
+    )
+    return MUDAR_UNIDADE_VALOR
+
+async def mudar_unidade_receber(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    raw = update.message.text.strip()
+    if raw == CANCELAR_BTN: return await cancelar(update, ctx)
+    try:
+        novo_valor = float(raw.replace(",", "."))
+        if novo_valor <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("❌ Digite um valor válido maior que zero:")
+        return MUDAR_UNIDADE_VALOR
+    unidade_anterior = get_unidade_atual()
+    set_unidade_atual(novo_valor)
+    await update.message.reply_text(
+        f"✅ *Unidade atualizada!*\n\n"
+        f"Anterior: R$ {unidade_anterior:.2f}\n"
+        f"Nova: *R$ {novo_valor:.2f}*\n\n"
+        f"Todas as apostas daqui pra frente usarão essa unidade.",
+        parse_mode="Markdown"
+    )
+    return await voltar_menu(update, ctx)
 
 # ── GERAR DASHBOARD ───────────────────────────────────────────────────────────
 async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -837,7 +943,64 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ws2.row_dimensions[er].height=18
     for i,w in enumerate([12,22,10,10,10,14,14,10],1): ws2.column_dimensions[get_column_letter(i)].width=w
 
-    # ── ABA 6: GRAFICO ──
+    # ── ABA 6: POR MÊS ──
+    from collections import defaultdict as _dd2
+    NOMES_MES_XL = ["","Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
+    por_mes_xl = _dd2(list)
+    for a in df_res:
+        d = a["data"] if hasattr(a["data"],"strftime") else __import__("datetime").datetime.strptime(str(a["data"])[:10],"%Y-%m-%d")
+        por_mes_xl[d.strftime("%Y-%m")].append(a)
+
+    wm = wb.create_sheet("Por Mes")
+    wm.merge_cells("A1:I1"); wm["A1"] = "POR MÊS"
+    est(wm["A1"],bold=True,bg=DARK,size=14); wm.row_dimensions[1].height=34; wm.row_dimensions[2].height=8
+    for c,h in enumerate(["Mês","Apostas","Ganhou","Perdeu","Stake","Lucro R$","Lucro Units","ROI","Win Rate"],1):
+        cell=wm.cell(row=3,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
+    wm.row_dimensions[3].height=22
+
+    acum_m = 0
+    for i,chave in enumerate(sorted(por_mes_xl.keys())):
+        ap_m = por_mes_xl[chave]
+        ano_m,mes_m = int(chave[:4]),int(chave[5:])
+        lucro_m  = sum(lucro_aposta(a) for a in ap_m)
+        stake_m  = sum(float(a["stake"]) for a in ap_m)
+        g_m      = sum(1 for a in ap_m if a["resultado"]=="ganhou")
+        roi_m    = lucro_m/stake_m if stake_m else 0
+        wr_m     = g_m/len(ap_m) if ap_m else 0
+        # Lucro em unidades: cada aposta usa a unidade registrada nela
+        lucro_u_m = sum(lucro_aposta(a)/float(a.get("unidade") or 50) for a in ap_m)
+        acum_m  += lucro_m
+        er=4+i; rb=WHITE if i%2==0 else ALT
+        for col,val in enumerate([f"{NOMES_MES_XL[mes_m]}/{ano_m}",len(ap_m),g_m,len(ap_m)-g_m,stake_m,lucro_m,round(lucro_u_m,2),roi_m,wr_m],1):
+            cell=wm.cell(row=er,column=col,value=val); fc="000000"
+            if col in (6,7,8): fc=cor(val)
+            cell.font=Font(name="Arial",size=10,color=fc)
+            cell.alignment=Alignment(horizontal="left" if col==1 else "center",vertical="center")
+            cell.fill=PatternFill("solid",start_color=rb); cell.border=brd()
+            if col in (5,6): cell.number_format="#,##0.00"
+            if col==7: cell.number_format="+0.00;-0.00;0.00"
+            if col in (8,9): cell.number_format="+0.0%;-0.0%;0.0%"
+        wm.row_dimensions[er].height=18
+
+    # Linha de total
+    tr_m = 4+len(por_mes_xl)
+    for col in range(1,10):
+        cell=wm.cell(row=tr_m,column=col)
+        if col==1: cell.value="TOTAL"
+        elif col==2: cell.value=len(df_res)
+        elif col==3: cell.value=sum(1 for a in df_res if a["resultado"]=="ganhou")
+        elif col==4: cell.value=sum(1 for a in df_res if a["resultado"]=="perdeu")
+        elif col==5: cell.value=round(sum(float(a["stake"]) for a in df_res),2); cell.number_format="#,##0.00"
+        elif col==6: cell.value=round(sum(lucro_aposta(a) for a in df_res),2); cell.number_format="#,##0.00"; fc=cor(cell.value); cell.font=Font(name="Arial",bold=True,size=10,color=fc)
+        elif col==7:
+            total_u=sum(lucro_aposta(a)/float(a.get("unidade") or 50) for a in df_res)
+            cell.value=round(total_u,2); cell.number_format="+0.00;-0.00;0.00"; fc=cor(cell.value); cell.font=Font(name="Arial",bold=True,size=10,color=fc)
+        if col not in (6,7): cell.font=Font(name="Arial",bold=True,size=10,color="FFFFFF")
+        est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
+    wm.row_dimensions[tr_m].height=22
+    for i,w in enumerate([12,10,10,10,14,14,14,10,12],1): wm.column_dimensions[get_column_letter(i)].width=w
+
+    # ── ABA 7: GRAFICO ──
     wg=wb.create_sheet("Evolucao da Banca")
     wg["A1"]="Aposta #"; wg["B1"]="Banca Acumulada"
     for i,(val) in enumerate(banca_acum,2):
@@ -926,10 +1089,19 @@ def main():
         fallbacks=fallbacks_padrao,
     )
 
+    conv_unidade = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^⚙️ Mudar Unidade$"), mudar_unidade_inicio)],
+        states={
+            MUDAR_UNIDADE_VALOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, mudar_unidade_receber)],
+        },
+        fallbacks=fallbacks_padrao,
+    )
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("exportar", exportar_csv))
     app.add_handler(conv_nova)
     app.add_handler(conv_editar)
+    app.add_handler(conv_unidade)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_botao))
 
     threading.Thread(target=iniciar_servidor, daemon=True).start()
