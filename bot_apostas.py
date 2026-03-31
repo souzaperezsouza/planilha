@@ -17,7 +17,7 @@ DATABASE_URL  = os.environ.get("DATABASE_URL", "postgresql://apostas_db_br3e_use
 BANCA_INICIAL = 5000
 
 CASAS = ["Bet365","Betano","SportingBet","Novibet","Vaidebet","Betfast","BETesporte",
-         "Betnacional","BetFair","Stake","Pagol","Esportes Da Sorte","Gol De Bet","Outra"]
+         "Betnacional","BetFair","Stake","Pagol","Esportes Da Sorte","Esportivabet","Outra"]
 
 ESPORTES = ["⚽ Futebol","🏀 Basquete","🎾 Tênis","🏒 Hóquei",
             "🏈 Futebol Americano","⚾ Beisebol","🥊 MMA/Boxe","🏐 Vôlei","Outro"]
@@ -616,14 +616,18 @@ async def editar_receber_valor(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             stake    = float(aposta["stake"])
             recebido = novo_valor
             lucro_co = recebido - stake
+            agora    = datetime.now()
             atualizar_campo(id_alvo, "resultado", "void")
+            atualizar_campo(id_alvo, "data",      agora.strftime("%Y-%m-%d"))
+            atualizar_campo(id_alvo, "horario",   agora.strftime("%H:%M"))
             sinal    = "+" if lucro_co >= 0 else ""
             emoji_co = "📈" if lucro_co >= 0 else "📉"
             await update.message.reply_text(
                 f"💸 *Cashout registrado!*\n\n"
                 f"💰 Apostado: R$ {stake:.2f}\n"
                 f"💸 Recebido: R$ {recebido:.2f}\n"
-                f"{emoji_co} Resultado: *{sinal}R$ {lucro_co:.2f}*",
+                f"{emoji_co} Resultado: *{sinal}R$ {lucro_co:.2f}*\n"
+                f"📅 Planilhado em: *{agora.strftime('%d/%m/%Y às %H:%M')}*",
                 parse_mode="Markdown")
             return await voltar_menu(update, ctx)
     else:
