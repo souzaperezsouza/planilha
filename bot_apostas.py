@@ -20,7 +20,8 @@ CASAS = ["Bet365","Betano","SportingBet","Novibet","Vaidebet","Betfast","BETespo
          "Betnacional","BetFair","Stake","Pagol","Esportes Da Sorte","Esportivabet","Outra"]
 
 ESPORTES = ["⚽ Futebol","🏀 Basquete","🎾 Tênis","🏒 Hóquei",
-            "🏈 Futebol Americano","⚾ Beisebol","🥊 MMA/Boxe","🏐 Vôlei","Outro"]
+            "🏈 Futebol Americano","⚾ Beisebol","🥊 MMA/Boxe","🏐 Vôlei",
+            "🏎️ F1","🎮 Esports","Outro"]
 
 logging.basicConfig(level=logging.WARNING)
 
@@ -44,7 +45,10 @@ def teclado_cancelar():
     return ReplyKeyboardMarkup([[CANCELAR_BTN]], resize_keyboard=True)
 
 def teclado_resultados():
-    return ReplyKeyboardMarkup([["🏦 Por Casa", "📅 Por Mês", "🔙 Voltar"]], resize_keyboard=True)
+    return ReplyKeyboardMarkup([
+        ["🏦 Por Casa", "🏅 Por Esporte"],
+        ["📅 Por Mês",  "🔙 Voltar"],
+    ], resize_keyboard=True)
 
 # ── BANCO DE DADOS ────────────────────────────────────────────────────────────
 def conectar():
@@ -142,7 +146,63 @@ def set_unidade_atual(valor: float):
 def normalizar_casa(s):
     return (s or "").strip().title() or "Sem casa"
 
-MAPA_ESPORTE = {"futebol":"⚽ Futebol","basquete":"🏀 Basquete","tenis":"🎾 Tênis","tênis":"🎾 Tênis","hoquei":"🏒 Hóquei","hóquei":"🏒 Hóquei","ice hockey":"🏒 Hóquei","basketball":"🏀 Basquete","football":"⚽ Futebol","tennis":"🎾 Tênis"}
+MAPA_ESPORTE = {
+    # Futebol
+    "futebol":              "⚽ Futebol",
+    "soccer":               "⚽ Futebol",
+    "football":             "⚽ Futebol",
+    "⚽ futebol":           "⚽ Futebol",
+    # Basquete
+    "basquete":             "🏀 Basquete",
+    "basketball":           "🏀 Basquete",
+    "🏀 basquete":          "🏀 Basquete",
+    # Tênis
+    "tenis":                "🎾 Tênis",
+    "tênis":                "🎾 Tênis",
+    "tennis":               "🎾 Tênis",
+    "🎾 tênis":             "🎾 Tênis",
+    # Hóquei
+    "hoquei":               "🏒 Hóquei",
+    "hóquei":               "🏒 Hóquei",
+    "ice hockey":           "🏒 Hóquei",
+    "hockey":               "🏒 Hóquei",
+    "🏒 hóquei":            "🏒 Hóquei",
+    # Futebol Americano
+    "futebol americano":    "🏈 Futebol Americano",
+    "american football":    "🏈 Futebol Americano",
+    "nfl":                  "🏈 Futebol Americano",
+    "🏈 futebol americano": "🏈 Futebol Americano",
+    # Beisebol
+    "beisebol":             "⚾ Beisebol",
+    "baseball":             "⚾ Beisebol",
+    "⚾ beisebol":          "⚾ Beisebol",
+    # MMA/Boxe
+    "mma/boxe":             "🥊 MMA/Boxe",
+    "mma":                  "🥊 MMA/Boxe",
+    "boxe":                 "🥊 MMA/Boxe",
+    "boxing":               "🥊 MMA/Boxe",
+    "🥊 mma/boxe":          "🥊 MMA/Boxe",
+    # Vôlei
+    "volei":                "🏐 Vôlei",
+    "vôlei":                "🏐 Vôlei",
+    "volleyball":           "🏐 Vôlei",
+    "🏐 vôlei":             "🏐 Vôlei",
+    # F1
+    "f1":                   "🏎️ F1",
+    "formula 1":            "🏎️ F1",
+    "fórmula 1":            "🏎️ F1",
+    "formula1":             "🏎️ F1",
+    "🏎️ f1":               "🏎️ F1",
+    # Esports
+    "esports":              "🎮 Esports",
+    "esport":               "🎮 Esports",
+    "e-sports":             "🎮 Esports",
+    "e-sport":              "🎮 Esports",
+    "🎮 esports":           "🎮 Esports",
+    # Cricket
+    "cricket":              "🏏 Cricket",
+    "🏏 cricket":           "🏏 Cricket",
+}
 
 def normalizar_esporte(s):
     if not s: return ""
@@ -192,6 +252,8 @@ async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return await resultados_por_casa(update, ctx)
         if txt == "📅 Por Mês":
             return await resultados_por_mes(update, ctx)
+        if txt == "🏅 Por Esporte":
+            return await resultados_por_esporte(update, ctx)
         # Tenta como data
         if await resultados_dia(update, ctx, txt):
             return
@@ -367,7 +429,7 @@ async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"⏳ Stake em curso: *R$ {stake_curso:.2f}* ({len(pendentes_ap)} apostas)\n\n"
         f"📅 Digite uma data (DD/MM) para ver aquele dia\n"
         f"📅 *Por Mês* para ver o resumo mensal\n"
-        f"🏦 *Por Casa* para ver por casa\n"
+        f"🏦 *Por Casa* | 🏅 *Por Esporte* para ver por categoria\n"
         f"🔙 *Voltar* para sair",
         reply_markup=teclado_resultados(), parse_mode="Markdown"
     )
@@ -432,6 +494,30 @@ async def resultados_por_mes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     sinal_ac = "+" if acum >= 0 else ""
     linhas.append(f"📊 *Acumulado: {sinal_ac}R$ {acum:.2f}*")
     linhas.append("\nDigite uma data (DD/MM), 🏦 *Por Casa* ou 🔙 *Voltar*:")
+    await update.message.reply_text("\n".join(linhas), reply_markup=teclado_resultados(), parse_mode="Markdown")
+
+async def resultados_por_esporte(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    apostas = carregar()
+    res     = [a for a in apostas if a["resultado"] in ("ganhou","perdeu")]
+    if not res:
+        await update.message.reply_text("Nenhuma aposta resolvida ainda.", reply_markup=teclado_resultados())
+        return
+    esportes = {}
+    for a in res:
+        esp = normalizar_esporte(a.get("esporte")) or "Sem esporte"
+        if esp not in esportes:
+            esportes[esp] = {"ap":0,"g":0,"stake":0.0,"lucro":0.0}
+        e = esportes[esp]; e["ap"] += 1; e["stake"] += float(a["stake"])
+        e["lucro"] += lucro_aposta(a)
+        if a["resultado"] == "ganhou": e["g"] += 1
+    ordenados = sorted(esportes.items(), key=lambda x: x[1]["lucro"], reverse=True)
+    linhas = ["🏅 *Por Esporte:*\n"]
+    for nome, e in ordenados:
+        roi   = e["lucro"]/e["stake"] if e["stake"] else 0
+        emoji = "🟢" if e["lucro"] >= 0 else "🔴"
+        sinal = "+" if e["lucro"] >= 0 else ""
+        linhas.append(f"{emoji} *{nome}*\n  {e['ap']} ap | {e['g']}V/{e['ap']-e['g']}D | {sinal}R$ {e['lucro']:.2f} | ROI: {roi:+.1%}\n")
+    linhas.append("\nDigite uma data (DD/MM) ou 🔙 Voltar:")
     await update.message.reply_text("\n".join(linhas), reply_markup=teclado_resultados(), parse_mode="Markdown")
 
 async def resultados_dia(update: Update, ctx: ContextTypes.DEFAULT_TYPE, raw: str) -> bool:
