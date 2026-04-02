@@ -74,6 +74,7 @@ def inicializar_db():
             """)
             cur.execute("ALTER TABLE apostas ADD COLUMN IF NOT EXISTS freebet NUMERIC(10,2) DEFAULT 0")
             cur.execute("ALTER TABLE apostas ADD COLUMN IF NOT EXISTS unidade NUMERIC(10,2) DEFAULT 50")
+            cur.execute("ALTER TABLE apostas ADD COLUMN IF NOT EXISTS cashout_valor NUMERIC(10,2) DEFAULT 0")
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS configuracoes (
                     chave  VARCHAR(50) PRIMARY KEY,
@@ -106,7 +107,7 @@ def inserir(a):
     return new_id
 
 def atualizar_campo(id_aposta, campo, valor):
-    if campo not in {"data","horario","descricao","odd","stake","resultado","casa","esporte","freebet"}:
+    if campo not in {"data","horario","descricao","odd","stake","resultado","casa","esporte","freebet","cashout_valor"}:
         return
     with conectar() as conn:
         with conn.cursor() as cur:
@@ -217,10 +218,18 @@ def lucro_aposta(a):
         freebet = stake if str(a.get("freebet","")).strip().lower() == "sim" else 0.0
     freebet = min(freebet, stake)
     if a["resultado"] == "ganhou":
-        return stake * (odd - 1)  # freebet nao afeta o green
+        return stake * (odd - 1)
     if a["resultado"] == "perdeu":
-        return -(stake - freebet)  # freebet reduz o prejuizo
+        return -(stake - freebet)
+    if a["resultado"] == "void":
+        cashout_valor = float(a.get("cashout_valor") or 0)
+        if cashout_valor > 0:
+            return cashout_valor - stake  # lucro real do cashout
     return 0.0
+
+def eh_cashout(a):
+    """Retorna True se a aposta void foi um cashout (tem cashout_valor > 0)."""
+    return a["resultado"] == "void" and float(a.get("cashout_valor") or 0) > 0
 
 async def voltar_menu(update, ctx):
     ctx.user_data.clear()
@@ -404,7 +413,7 @@ async def ver_pendentes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data["modo"] = "resultados"
     apostas = carregar()
-    res     = [a for a in apostas if a["resultado"] in ("ganhou","perdeu")]
+    res     = [a for a in apostas if a["resultado"] in ("ganhou","perdeu") or eh_cashout(a)]
     if not res:
         await update.message.reply_text("Nenhuma aposta resolvida ainda.")
         return
@@ -436,7 +445,7 @@ async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def resultados_por_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     apostas = carregar()
-    res     = [a for a in apostas if a["resultado"] in ("ganhou","perdeu")]
+    res     = [a for a in apostas if a["resultado"] in ("ganhou","perdeu") or eh_cashout(a)]
     casas   = {}
     for a in res:
         casa = normalizar_casa(a.get("casa"))
@@ -459,7 +468,7 @@ async def resultados_por_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def resultados_por_mes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     apostas = carregar()
-    res     = [a for a in apostas if a["resultado"] in ("ganhou","perdeu")]
+    res     = [a for a in apostas if a["resultado"] in ("ganhou","perdeu") or eh_cashout(a)]
     if not res:
         await update.message.reply_text("Nenhuma aposta resolvida ainda.", reply_markup=teclado_resultados())
         return
@@ -498,7 +507,7 @@ async def resultados_por_mes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def resultados_por_esporte(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     apostas = carregar()
-    res     = [a for a in apostas if a["resultado"] in ("ganhou","perdeu")]
+    res     = [a for a in apostas if a["resultado"] in ("ganhou","perdeu") or eh_cashout(a)]
     if not res:
         await update.message.reply_text("Nenhuma aposta resolvida ainda.", reply_markup=teclado_resultados())
         return
@@ -534,23 +543,30 @@ async def resultados_dia(update: Update, ctx: ContextTypes.DEFAULT_TYPE, raw: st
         return False
     data_str = data_obj.strftime("%Y-%m-%d")
     apostas  = carregar()
-    do_dia   = [a for a in apostas if str(a["data"])[:10] == data_str and a["resultado"] in ("ganhou","perdeu")]
+    do_dia   = [a for a in apostas if str(a["data"])[:10] == data_str and (a["resultado"] in ("ganhou","perdeu") or eh_cashout(a))]
     if not do_dia:
         await update.message.reply_text(
             f"Nenhuma aposta resolvida em {data_obj.strftime('%d/%m/%Y')}.",
             reply_markup=teclado_resultados())
         return True
     lucro_dia = sum(lucro_aposta(a) for a in do_dia)
-    g = sum(1 for a in do_dia if a["resultado"] == "ganhou")
-    p = sum(1 for a in do_dia if a["resultado"] == "perdeu")
+    g  = sum(1 for a in do_dia if a["resultado"] == "ganhou")
+    p  = sum(1 for a in do_dia if a["resultado"] == "perdeu")
+    co = sum(1 for a in do_dia if eh_cashout(a))
     emoji = "🟢" if lucro_dia >= 0 else "🔴"
     sinal = "+" if lucro_dia >= 0 else ""
-    emojis = {"ganhou":"✅","perdeu":"❌"}
-    linhas = [f"{emoji} *{data_obj.strftime('%d/%m/%Y')}* — {g}V {p}D — {sinal}R$ {lucro_dia:.2f}\n"]
+    resumo_str = f"{g}V {p}D"
+    if co: resumo_str += f" {co}CO"
+    linhas = [f"{emoji} *{data_obj.strftime('%d/%m/%Y')}* — {resumo_str} — {sinal}R$ {lucro_dia:.2f}\n"]
+    emojis_res = {"ganhou":"✅","perdeu":"❌"}
     for a in do_dia:
         l = lucro_aposta(a)
         s = "+" if l >= 0 else ""
-        linhas.append(f"{emojis.get(a['resultado'],'')} odd {a['odd']} | R${float(a['stake']):.0f} → {s}R$ {l:.2f}\n_{a['descricao']}_\n")
+        if eh_cashout(a):
+            cv = float(a.get("cashout_valor") or 0)
+            linhas.append(f"💸 odd {a['odd']} | R${float(a['stake']):.0f} → CO R${cv:.0f} ({s}R$ {l:.2f})\n_{a['descricao']}_\n")
+        else:
+            linhas.append(f"{emojis_res.get(a['resultado'],'')} odd {a['odd']} | R${float(a['stake']):.0f} → {s}R$ {l:.2f}\n_{a['descricao']}_\n")
     linhas.append("Digite outra data, 🏦 *Por Casa* ou 🔙 *Voltar*:")
     await update.message.reply_text("\n".join(linhas), reply_markup=teclado_resultados(), parse_mode="Markdown")
     return True
@@ -703,9 +719,10 @@ async def editar_receber_valor(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             recebido = novo_valor
             lucro_co = recebido - stake
             agora    = datetime.now()
-            atualizar_campo(id_alvo, "resultado", "void")
-            atualizar_campo(id_alvo, "data",      agora.strftime("%Y-%m-%d"))
-            atualizar_campo(id_alvo, "horario",   agora.strftime("%H:%M"))
+            atualizar_campo(id_alvo, "resultado",     "void")
+            atualizar_campo(id_alvo, "cashout_valor", recebido)
+            atualizar_campo(id_alvo, "data",          agora.strftime("%Y-%m-%d"))
+            atualizar_campo(id_alvo, "horario",       agora.strftime("%H:%M"))
             sinal    = "+" if lucro_co >= 0 else ""
             emoji_co = "📈" if lucro_co >= 0 else "📉"
             await update.message.reply_text(
@@ -803,7 +820,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     apostas = carregar()
     apostas_ord = sorted(apostas, key=lambda a: (str(a["data"]), a.get("horario") or "99:99", int(a["id"])))
-    df_res = [a for a in apostas_ord if a["resultado"] in ("ganhou","perdeu")]
+    df_res = [a for a in apostas_ord if a["resultado"] in ("ganhou","perdeu") or eh_cashout(a)]
 
     BANCA = 5000
     DARK  = "1E293B"; GREEN = "16A34A"; RED = "DC2626"; AMBER = "D97706"
