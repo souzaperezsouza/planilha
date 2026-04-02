@@ -898,10 +898,12 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         rb=WHITE if i%2==0 else ALT
         res=a["resultado"]
         lucro_a=banca_a=prog_a=""
-        if res in ("ganhou","perdeu"):
-            lucro_a=lucro_aposta(a) if res in ("ganhou","perdeu") else ""
-            acum2+=lucro_a; banca_a=round(acum2,2); prog_a=round(acum2/BANCA,4)
-        res_d={"ganhou":"Ganhou","perdeu":"Perdeu","void":"Void","pendente":"Pendente"}.get(res,res)
+        if res in ("ganhou","perdeu") or eh_cashout(a):
+            lucro_a = lucro_aposta(a)
+            acum2 += lucro_a
+            banca_a = round(acum2,2)
+            prog_a = round(acum2/BANCA,4)
+        res_d = "Cashout" if eh_cashout(a) else {"ganhou":"Ganhou","perdeu":"Perdeu","void":"Void","pendente":"Pendente"}.get(res,res)
         data_fmt=a["data"].strftime("%d/%m/%Y") if hasattr(a["data"],"strftime") else str(a["data"])[:10]
         vals=[a["id"],data_fmt,a.get("horario",""),a["descricao"],a["odd"],a["stake"],
               a.get("esporte",""),a.get("casa",""),res_d,lucro_a,banca_a,prog_a]
