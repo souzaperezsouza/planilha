@@ -228,6 +228,7 @@ def lucro_aposta(a):
     return 0.0
 
 def eh_cashout(a):
+    return str(a.get("resultado","")).lower() == "cashout" or
     """Retorna True se a aposta void foi um cashout (tem cashout_valor > 0)."""
     return a["resultado"] == "void" and float(a.get("cashout_valor") or 0) > 0
 
