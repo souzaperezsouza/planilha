@@ -228,9 +228,12 @@ def lucro_aposta(a):
     return 0.0
 
 def eh_cashout(a):
-    return str(a.get("resultado","")).lower() == "cashout" or
-    """Retorna True se a aposta void foi um cashout (tem cashout_valor > 0)."""
-    return a["resultado"] == "void" and float(a.get("cashout_valor") or 0) > 0
+    """Detecta se a aposta é cashout."""
+    res = str(a.get("resultado","")).lower()
+    if res == "cashout":
+        return True
+    return res == "void" and float(a.get("cashout_valor", 0) or 0) > 0
+ float(a.get("cashout_valor") or 0) > 0
 
 async def voltar_menu(update, ctx):
     ctx.user_data.clear()
