@@ -1114,7 +1114,71 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     wm.row_dimensions[tr_m].height=22
     for i,w in enumerate([12,10,10,10,14,14,14,10,12],1): wm.column_dimensions[get_column_letter(i)].width=w
 
-    # ── ABA 7: GRAFICO ──
+    # ── ABA 7: POR UNIDADE ──
+    # Agrupa apostas por valor de unidade vigente, mostra desempenho de cada fase
+    from collections import defaultdict as _dd3
+    por_unidade = _dd3(list)
+    for a in df_res:
+        u = float(a.get("unidade") or 50)
+        por_unidade[u].append(a)
+
+    wu = wb.create_sheet("Por Unidade")
+    wu.merge_cells("A1:J1"); wu["A1"] = "POR UNIDADE"
+    est(wu["A1"],bold=True,bg=DARK,size=14); wu.row_dimensions[1].height=34; wu.row_dimensions[2].height=8
+    for c,h in enumerate(["Unidade","Apostas","Ganhou","Perdeu","Stake","Lucro R$","Lucro Units","ROI","Win Rate","% do Total"],1):
+        cell=wu.cell(row=3,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
+    wu.row_dimensions[3].height=22
+
+    lucro_total_geral = sum(lucro_aposta(a) for a in df_res)
+    for i, u_val in enumerate(sorted(por_unidade.keys())):
+        ap_u = por_unidade[u_val]
+        er = 4+i; rb = WHITE if i%2==0 else ALT
+        lucro_u_rs  = sum(lucro_aposta(a) for a in ap_u)
+        lucro_u_u   = lucro_u_rs / u_val if u_val else 0
+        stake_u     = sum(float(a["stake"]) for a in ap_u)
+        g_u         = sum(1 for a in ap_u if a["resultado"]=="ganhou")
+        roi_u       = lucro_u_rs / stake_u if stake_u else 0
+        wr_u        = g_u / len(ap_u) if ap_u else 0
+        pct_total   = lucro_u_rs / lucro_total_geral if lucro_total_geral else 0
+
+        # Datas min/max desse período
+        datas = []
+        for a in ap_u:
+            try: datas.append(str(a["data"])[:10])
+            except: pass
+        periodo_str = f"R$ {u_val:.0f}/ap"
+
+        for col,val in enumerate([periodo_str,len(ap_u),g_u,len(ap_u)-g_u,stake_u,lucro_u_rs,round(lucro_u_u,2),roi_u,wr_u,pct_total],1):
+            cell=wu.cell(row=er,column=col,value=val); fc="000000"
+            if col in (6,7,8): fc=cor(val)
+            cell.font=Font(name="Arial",size=10,color=fc)
+            cell.alignment=Alignment(horizontal="left" if col==1 else "center",vertical="center")
+            cell.fill=PatternFill("solid",start_color=rb); cell.border=brd()
+            if col in (5,6): cell.number_format="#,##0.00"
+            if col==7: cell.number_format="+0.00;-0.00;0.00"
+            if col in (8,9,10): cell.number_format="+0.0%;-0.0%;0.0%"
+        wu.row_dimensions[er].height=18
+
+    # Linha de total
+    tr_u = 4+len(por_unidade)
+    for col in range(1,11):
+        cell=wu.cell(row=tr_u,column=col)
+        if col==1: cell.value="TOTAL"
+        elif col==2: cell.value=len(df_res)
+        elif col==3: cell.value=sum(1 for a in df_res if a["resultado"]=="ganhou")
+        elif col==4: cell.value=sum(1 for a in df_res if a["resultado"]=="perdeu")
+        elif col==5: cell.value=round(sum(float(a["stake"]) for a in df_res),2); cell.number_format="#,##0.00"
+        elif col==6: cell.value=round(lucro_total_geral,2); cell.number_format="#,##0.00"; fc=cor(cell.value); cell.font=Font(name="Arial",bold=True,size=10,color=fc)
+        elif col==7:
+            total_u_all=sum(lucro_aposta(a)/float(a.get("unidade") or 50) for a in df_res)
+            cell.value=round(total_u_all,2); cell.number_format="+0.00;-0.00;0.00"; fc=cor(cell.value); cell.font=Font(name="Arial",bold=True,size=10,color=fc)
+        elif col==10: cell.value=1.0; cell.number_format="0%"
+        if col not in (6,7): cell.font=Font(name="Arial",bold=True,size=10,color="FFFFFF")
+        est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
+    wu.row_dimensions[tr_u].height=22
+    for i,w in enumerate([14,10,10,10,14,14,14,10,12,12],1): wu.column_dimensions[get_column_letter(i)].width=w
+
+    # ── ABA 8: GRAFICO ──
     wg=wb.create_sheet("Evolucao da Banca")
     wg["A1"]="Aposta #"; wg["B1"]="Banca Acumulada"
     for i,(val) in enumerate(banca_acum,2):
