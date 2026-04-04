@@ -863,7 +863,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # ── ABA 1: DASHBOARD ──
     ws = wb.active; ws.title = "Dashboard"
-    ws.merge_cells("A1:M1"); ws["A1"] = "DASHBOARD DE APOSTAS"
+    ws.merge_cells("A1:I1"); ws["A1"] = "DASHBOARD DE APOSTAS"
     est(ws["A1"], bold=True, bg=DARK, size=16); ws.row_dimensions[1].height = 40
     ws.row_dimensions[2].height = 8
 
@@ -871,19 +871,22 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lucro_units_dash = lucro_total / unidade_dash if unidade_dash else 0
     stake_curso = sum(float(a["stake"]) for a in apostas if a["resultado"]=="pendente")
     cards = [
-        ("Total",str(total),DARK),("Resolvidas",str(resolvidas),DARK),
-        ("Pendentes",str(pendentes),AMBER if pendentes else DARK),
-        ("Win Rate",f"{win_rate:.1%}",GREEN if win_rate>=0.5 else RED),
-        ("Lucro R$",f"R$ {lucro_total:.2f}",GREEN if lucro_total>=0 else RED),
-        ("Lucro Units",f"{lucro_units_dash:+.2f}u",GREEN if lucro_units_dash>=0 else RED),
-        ("ROI",f"{roi:+.1%}",GREEN if roi>=0 else RED),
-        ("Progressao",f"{progressao:+.2%}",GREEN if progressao>=0 else RED),
-        ("Em Curso",f"R$ {stake_curso:.2f}",AMBER if stake_curso>0 else DARK),
+        ("Total",         str(total),                    DARK),
+        ("Resolvidas",    str(resolvidas),               DARK),
+        ("Pendentes",     str(pendentes),                AMBER if pendentes else DARK),
+        ("Win Rate",      f"{win_rate:.1%}",             GREEN if win_rate>=0.5 else RED),
+        ("Lucro R$",      f"R${lucro_total:.2f}",        GREEN if lucro_total>=0 else RED),
+        ("Lucro Units",   f"{lucro_units_dash:+.1f}u",   GREEN if lucro_units_dash>=0 else RED),
+        ("ROI",           f"{roi:+.1%}",                 GREEN if roi>=0 else RED),
+        ("Progressao",    f"{progressao:+.1%}",          GREEN if progressao>=0 else RED),
+        ("Em Curso",      f"R${stake_curso:.0f}",        AMBER if stake_curso>0 else DARK),
     ]
+    # 9 cards em 9 colunas com largura uniforme
     for i,(label,val,bg) in enumerate(cards,1):
         c=ws.cell(row=3,column=i,value=label); est(c,bg=bg,size=9,fc="DBEAFE"); ws.row_dimensions[3].height=20
-        v=ws.cell(row=4,column=i,value=val);   est(v,bold=True,bg=bg,size=13);  ws.row_dimensions[4].height=32
+        v=ws.cell(row=4,column=i,value=val);   est(v,bold=True,bg=bg,size=12);  ws.row_dimensions[4].height=32
         d=ws.cell(row=5,column=i);              est(d,bg="0F172A");              ws.row_dimensions[5].height=4
+        ws.column_dimensions[get_column_letter(i)].width=15
     ws.row_dimensions[6].height=10
 
     HDR=7; DAT=8
@@ -925,49 +928,58 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         elif c==10: cell.value=f"=SUM(J{DAT}:J{tr-1})"; cell.number_format="#,##0.00"
         est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
 
-    widths=[5,12,7,34,7,11,14,14,12,12,14,13]
+    widths=[5,11,7,32,7,10,14,14,11,11,13,12]
     for i,w in enumerate(widths,1): ws.column_dimensions[get_column_letter(i)].width=w
 
     # ── ABA 2: ESTATÍSTICAS ──
     from openpyxl.chart import BarChart
-    wst = wb.create_sheet("Estatísticas", 1)  # posição 1 = segunda aba
+    wst = wb.create_sheet("Estatísticas", 1)
 
-    # ── Cálculos das métricas ──
-    apostas_ganhas  = [a for a in df_res if a["resultado"] == "ganhou"]
-    apostas_perdidas= [a for a in df_res if a["resultado"] == "perdeu"]
-    capital_em_jogo = sum(float(a["stake"]) for a in apostas if a["resultado"] == "pendente")
-    capital_atual   = BANCA + lucro_total - capital_em_jogo
+    # Cálculos
+    apostas_ganhas   = [a for a in df_res if a["resultado"] == "ganhou"]
+    apostas_perdidas = [a for a in df_res if a["resultado"] == "perdeu"]
+    capital_em_jogo  = sum(float(a["stake"]) for a in apostas if a["resultado"] == "pendente")
+    capital_atual    = BANCA + lucro_total - capital_em_jogo
+    maior_odd_acert  = max((float(a["odd"]) for a in apostas_ganhas), default=0)
+    maior_stake_val  = max((float(a["stake"]) for a in df_res), default=0)
+    stake_total_e    = sum(float(a["stake"]) for a in df_res)
+    stake_media_e    = stake_total_e / len(df_res) if df_res else 0
+    odd_media_e      = sum(float(a["odd"]) for a in df_res) / len(df_res) if df_res else 0
+    maior_lucro_e    = max((lucro_aposta(a) for a in apostas_ganhas), default=0)
+    maior_perda_e    = min((lucro_aposta(a) for a in apostas_perdidas), default=0)
 
-    maior_odd_acertada = max((float(a["odd"]) for a in apostas_ganhas), default=0)
-    maior_stake        = max((float(a["stake"]) for a in df_res), default=0)
-    stake_total        = sum(float(a["stake"]) for a in df_res)
-    stake_media        = stake_total / len(df_res) if df_res else 0
-    odd_media          = sum(float(a["odd"]) for a in df_res) / len(df_res) if df_res else 0
-    maior_lucro        = max((lucro_aposta(a) for a in apostas_ganhas), default=0)
-    maior_perda        = min((lucro_aposta(a) for a in apostas_perdidas), default=0)
-
-    # Sequências de greens e reds
-    seq_verde_max = seq_vermelho_max = seq_verde_cur = seq_vermelho_cur = 0
+    seq_verde_max = seq_verm_max = seq_verde_cur = seq_verm_cur = 0
     for a in df_res:
         if a["resultado"] == "ganhou":
-            seq_verde_cur += 1; seq_vermelho_cur = 0
+            seq_verde_cur += 1; seq_verm_cur = 0
         elif a["resultado"] == "perdeu":
-            seq_vermelho_cur += 1; seq_verde_cur = 0
+            seq_verm_cur += 1; seq_verde_cur = 0
         else:
-            seq_verde_cur = seq_vermelho_cur = 0
-        seq_verde_max   = max(seq_verde_max,   seq_verde_cur)
-        seq_vermelho_max= max(seq_vermelho_max, seq_vermelho_cur)
+            seq_verde_cur = seq_verm_cur = 0
+        seq_verde_max = max(seq_verde_max, seq_verde_cur)
+        seq_verm_max  = max(seq_verm_max,  seq_verm_cur)
 
-    # ── Layout da aba ──
-    wst.merge_cells("A1:F1"); wst["A1"] = "ESTATÍSTICAS"
+    # Por Unidade
+    por_unidade_e = {}
+    for a in df_res:
+        u = float(a.get("unidade") or 50)
+        if u not in por_unidade_e:
+            por_unidade_e[u] = {"ap":0,"g":0,"lucro":0.0,"stake":0.0}
+        por_unidade_e[u]["ap"] += 1
+        por_unidade_e[u]["lucro"] += lucro_aposta(a)
+        por_unidade_e[u]["stake"] += float(a["stake"])
+        if a["resultado"] == "ganhou": por_unidade_e[u]["g"] += 1
+
+    # Layout
+    wst.merge_cells("A1:C1"); wst["A1"] = "ESTATÍSTICAS"
     est(wst["A1"], bold=True, bg=DARK, size=14)
-    wst.row_dimensions[1].height = 34; wst.row_dimensions[2].height = 8
+    wst.row_dimensions[1].height = 34; wst.row_dimensions[2].height = 6
 
     def stat_row(ws, row, label, valor, fmt=None, cor_val=False):
         cl = ws.cell(row=row, column=1, value=label)
         cl.font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
         cl.fill = PatternFill("solid", start_color="1E3A5F")
-        cl.alignment = Alignment(horizontal="left", vertical="center")
+        cl.alignment = Alignment(horizontal="left", vertical="center", wrap_text=False)
         cl.border = brd()
         cv = ws.cell(row=row, column=2, value=valor)
         fc = "000000"
@@ -982,88 +994,121 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ws.row_dimensions[row].height = 20
 
     metricas = [
-        ("💰 Capital Atual (R$)",        round(capital_atual, 2),      "#,##0.00", True),
-        ("📊 Stake Investida Total (R$)", round(stake_total, 2),        "#,##0.00", False),
-        ("💵 Stake Média (R$)",           round(stake_media, 2),        "#,##0.00", False),
-        ("🎯 Odd Média",                  round(odd_media, 3),          "0.000",    False),
-        ("🏆 Maior Odd Acertada",         round(maior_odd_acertada, 3), "0.000",    False),
-        ("💸 Maior Stake (R$)",           round(maior_stake, 2),        "#,##0.00", False),
-        ("📈 Maior Lucro (R$)",           round(maior_lucro, 2),        "#,##0.00", True),
-        ("📉 Maior Perda (R$)",           round(maior_perda, 2),        "#,##0.00", True),
-        ("✅ Maior Sequência de Greens",  seq_verde_max,                "0",        False),
-        ("❌ Maior Sequência de Reds",    seq_vermelho_max,             "0",        False),
+        ("Capital Atual (R$)",         round(capital_atual, 2),      "#,##0.00", True),
+        ("Stake Investida Total (R$)",  round(stake_total_e, 2),      "#,##0.00", False),
+        ("Stake Média (R$)",            round(stake_media_e, 2),      "#,##0.00", False),
+        ("Odd Média",                   round(odd_media_e, 3),        "0.000",    False),
+        ("Maior Odd Acertada",          round(maior_odd_acert, 3),    "0.000",    False),
+        ("Maior Stake (R$)",            round(maior_stake_val, 2),    "#,##0.00", False),
+        ("Maior Lucro em uma aposta (R$)", round(maior_lucro_e, 2),  "#,##0.00", True),
+        ("Maior Perda em uma aposta (R$)", round(maior_perda_e, 2),  "#,##0.00", True),
+        ("Maior Sequência de Greens",   seq_verde_max,                "0",        False),
+        ("Maior Sequência de Reds",     seq_verm_max,                 "0",        False),
     ]
-    for i, (label, valor, fmt, cor_v) in enumerate(metricas):
+    for i,(label,valor,fmt,cor_v) in enumerate(metricas):
         stat_row(wst, 3+i, label, valor, fmt, cor_v)
 
-    wst.column_dimensions["A"].width = 30
-    wst.column_dimensions["B"].width = 18
+    # Por Unidade abaixo das métricas
+    pu_start = 3 + len(metricas) + 2
+    wst.row_dimensions[pu_start-1].height = 8
+    wst.merge_cells(f"A{pu_start}:C{pu_start}"); cell_pu = wst[f"A{pu_start}"]
+    cell_pu.value = "POR UNIDADE"
+    est(cell_pu, bold=True, bg=DARK, size=11)
+    wst.row_dimensions[pu_start].height = 22
+    for col,h in enumerate(["Unidade","Apostas","Ganhou","Perdeu","Stake","Lucro R$","Lucro Units","ROI","Win Rate"],1):
+        cell = wst.cell(row=pu_start+1, column=col, value=h)
+        est(cell, bold=True, bg="1E3A5F", size=9); cell.border = brd()
+        wst.row_dimensions[pu_start+1].height = 18
+    for i,u_val in enumerate(sorted(por_unidade_e.keys())):
+        d = por_unidade_e[u_val]
+        er = pu_start+2+i; rb = WHITE if i%2==0 else ALT
+        roi_u = d["lucro"]/d["stake"] if d["stake"] else 0
+        wr_u  = d["g"]/d["ap"] if d["ap"] else 0
+        lu_u  = d["lucro"]/u_val if u_val else 0
+        for col,val in enumerate([f"R$ {u_val:.0f}/ap",d["ap"],d["g"],d["ap"]-d["g"],round(d["stake"],2),round(d["lucro"],2),round(lu_u,2),roi_u,wr_u],1):
+            cell = wst.cell(row=er,column=col,value=val); fc="000000"
+            if col in (6,7,8): fc=cor(val)
+            cell.font=Font(name="Arial",size=9,color=fc)
+            cell.alignment=Alignment(horizontal="center" if col>1 else "left",vertical="center")
+            cell.fill=PatternFill("solid",start_color=rb); cell.border=brd()
+            if col in (5,6): cell.number_format="#,##0.00"
+            if col==7: cell.number_format="+0.00;-0.00;0.00"
+            if col in (8,9): cell.number_format="+0.0%;-0.0%;0.0%"
+        wst.row_dimensions[er].height=18
 
-    # ── Gráfico por faixa de odds ──
-    FAIXAS = [(1.00,1.33),(1.34,1.66),(1.67,2.00),(2.01,2.33),(2.34,2.66),
-              (2.67,2.99),(3.00,3.14),(3.15,3.28),(3.29,3.42),(3.43,9.99)]
+    # Larguras
+    wst.column_dimensions["A"].width = 32
+    wst.column_dimensions["B"].width = 16
+    for i in range(3,10): wst.column_dimensions[get_column_letter(i)].width = 12
 
-    def label_faixa(lo, hi):
-        return f"{lo:.2f}/{hi:.2f}" if hi < 9 else f"{lo:.2f}+"
+    # ── Gráficos por faixa de odds (0.5 em 0.5, sem faixas vazias) ──
+    odd_max = max((float(a["odd"]) for a in df_res), default=3.5)
+    # Gera faixas de 0.5 em 0.5 começando em 1.00
+    lo = 1.00
+    FAIXAS = []
+    while lo < odd_max + 0.5:
+        hi = round(lo + 0.49, 2)
+        FAIXAS.append((round(lo,2), hi))
+        lo = round(lo + 0.5, 2)
+
+    def lbl_f(lo,hi): return f"{lo:.2f}-{hi:.2f}"
 
     dados_faixa = []
-    for lo, hi in FAIXAS:
+    for lo,hi in FAIXAS:
         ap_f = [a for a in df_res if lo <= float(a["odd"]) <= hi]
-        g_f  = sum(1 for a in ap_f if a["resultado"] == "ganhou")
-        p_f  = sum(1 for a in ap_f if a["resultado"] == "perdeu")
-        lucro_f = sum(lucro_aposta(a) for a in ap_f)
-        dados_faixa.append((label_faixa(lo,hi), g_f, p_f, round(lucro_f,2)))
+        if not ap_f: continue  # pula faixas vazias
+        g_f = sum(1 for a in ap_f if a["resultado"]=="ganhou")
+        p_f = sum(1 for a in ap_f if a["resultado"]=="perdeu")
+        lucro_f = round(sum(lucro_aposta(a) for a in ap_f),2)
+        dados_faixa.append((lbl_f(lo,hi), g_f, p_f, lucro_f))
 
-    # Tabela de dados para o gráfico
-    data_row = 16
-    wst.row_dimensions[data_row-1].height = 8
+    # Tabela de dados para os gráficos — começa na coluna E para não colidir com métricas
+    data_row = 3
+    hdr_col  = 5  # coluna E
     headers_f = ["Faixa de Odds","Ganhou","Perdeu","Lucro R$"]
-    for c,h in enumerate(headers_f, 1):
+    for c,h in enumerate(headers_f, hdr_col):
         cell = wst.cell(row=data_row, column=c, value=h)
-        est(cell, bold=True, bg=DARK, size=9); cell.border = brd()
-        wst.row_dimensions[data_row].height = 18
+        est(cell, bold=True, bg=DARK, size=9); cell.border=brd()
+        wst.row_dimensions[data_row].height=18
 
-    for i,(faixa,g,p,lucro_f) in enumerate(dados_faixa):
-        er = data_row+1+i
-        rb = WHITE if i%2==0 else ALT
-        for c,val in enumerate([faixa,g,p,lucro_f],1):
-            cell = wst.cell(row=er,column=c,value=val)
-            fc = "000000"
-            if c==4: fc = cor(val)
-            cell.font = Font(name="Arial",size=9,color=fc)
-            cell.alignment = Alignment(horizontal="center",vertical="center")
-            cell.fill = PatternFill("solid",start_color=rb); cell.border = brd()
-            if c==4: cell.number_format="#,##0.00"
-        wst.row_dimensions[er].height = 16
+    for i,(faixa,g,p,lf) in enumerate(dados_faixa):
+        er = data_row+1+i; rb = WHITE if i%2==0 else ALT
+        for c,val in enumerate([faixa,g,p,lf], hdr_col):
+            cell=wst.cell(row=er,column=c,value=val)
+            fc="000000"
+            if c==hdr_col+3: fc=cor(val)
+            cell.font=Font(name="Arial",size=9,color=fc)
+            cell.alignment=Alignment(horizontal="center",vertical="center")
+            cell.fill=PatternFill("solid",start_color=rb); cell.border=brd()
+            if c==hdr_col+3: cell.number_format="#,##0.00"
+        wst.row_dimensions[er].height=15
 
-    for i,w in enumerate([14,9,9,12],1): wst.column_dimensions[get_column_letter(i)].width=w
+    for i,w in enumerate([14,9,9,12], hdr_col):
+        wst.column_dimensions[get_column_letter(i)].width=w
 
-    # Gráfico de barras — ganhou vs perdeu por faixa
-    n_faixas = len(dados_faixa)
+    n = len(dados_faixa)
+    cats = Reference(wst, min_col=hdr_col,   min_row=data_row+1, max_row=data_row+n)
+    d_g  = Reference(wst, min_col=hdr_col+1, min_row=data_row,   max_row=data_row+n)
+    d_p  = Reference(wst, min_col=hdr_col+2, min_row=data_row,   max_row=data_row+n)
+    d_l  = Reference(wst, min_col=hdr_col+3, min_row=data_row,   max_row=data_row+n)
+
+    # Gráfico 1 — apostas por faixa (colunas I em diante, linha 3)
     bar1 = BarChart(); bar1.type="col"; bar1.grouping="clustered"; bar1.overlap=0
     bar1.title="Apostas por Faixa de Odds"; bar1.style=10
-    bar1.y_axis.title="Apostas"; bar1.x_axis.title="Faixa de Odds"
-    bar1.width=24; bar1.height=12
-
-    cats = Reference(wst, min_col=1, min_row=data_row+1, max_row=data_row+n_faixas)
-    d_g  = Reference(wst, min_col=2, min_row=data_row,   max_row=data_row+n_faixas)
-    d_p  = Reference(wst, min_col=3, min_row=data_row,   max_row=data_row+n_faixas)
+    bar1.y_axis.title="Apostas"; bar1.width=26; bar1.height=14
     bar1.add_data(d_g, titles_from_data=True); bar1.add_data(d_p, titles_from_data=True)
     bar1.set_categories(cats)
-    bar1.series[0].graphicalProperties.solidFill = "16A34A"  # verde
-    bar1.series[1].graphicalProperties.solidFill = "DC2626"  # vermelho
-    wst.add_chart(bar1, "F3")
+    bar1.series[0].graphicalProperties.solidFill="16A34A"
+    bar1.series[1].graphicalProperties.solidFill="DC2626"
+    wst.add_chart(bar1, "J3")
 
-    # Gráfico de barras — lucro por faixa
+    # Gráfico 2 — lucro por faixa (colunas J em diante, linha 30 aprox — sem sobreposição)
     bar2 = BarChart(); bar2.type="col"; bar2.grouping="clustered"
     bar2.title="Lucro R$ por Faixa de Odds"; bar2.style=10
-    bar2.y_axis.title="Lucro R$"; bar2.x_axis.title="Faixa de Odds"
-    bar2.width=24; bar2.height=12
-
-    d_l = Reference(wst, min_col=4, min_row=data_row, max_row=data_row+n_faixas)
+    bar2.y_axis.title="Lucro R$"; bar2.width=26; bar2.height=14
     bar2.add_data(d_l, titles_from_data=True); bar2.set_categories(cats)
-    bar2.series[0].graphicalProperties.solidFill = "2563EB"
-    wst.add_chart(bar2, "F18")
+    bar2.series[0].graphicalProperties.solidFill="2563EB"
+    wst.add_chart(bar2, "J33")
 
     # ── ABA 3: LUCRO POR DIA ──
     from collections import defaultdict
