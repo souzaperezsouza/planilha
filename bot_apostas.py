@@ -863,8 +863,6 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # ── ABA 1: DASHBOARD ──
     ws = wb.active; ws.title = "Dashboard"
-    ws.merge_cells("A1:I1"); ws["A1"] = "DASHBOARD DE APOSTAS"
-    est(ws["A1"], bold=True, bg=DARK, size=16); ws.row_dimensions[1].height = 40
     ws.row_dimensions[2].height = 8
 
     unidade_dash = get_unidade_atual()
@@ -928,8 +926,10 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         elif c==10: cell.value=f"=SUM(J{DAT}:J{tr-1})"; cell.number_format="#,##0.00"
         est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
 
-    widths=[5,11,7,32,7,10,14,14,11,11,13,12]
+    widths=[8,12,11,32,14,12,14,14,13,12,13,12]
     for i,w in enumerate(widths,1): ws.column_dimensions[get_column_letter(i)].width=w
+    ws.merge_cells("A1:L1"); ws["A1"] = "DASHBOARD DE APOSTAS"
+    est(ws["A1"], bold=True, bg=DARK, size=16); ws.row_dimensions[1].height=40
 
     # ── ABA 2: ESTATÍSTICAS ──
     from openpyxl.chart import BarChart
@@ -1043,7 +1043,6 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # ── Gráficos por faixa de odds (0.5 em 0.5, sem faixas vazias) ──
     odd_max = max((float(a["odd"]) for a in df_res), default=3.5)
-    # Gera faixas de 0.5 em 0.5 começando em 1.00
     lo = 1.00
     FAIXAS = []
     while lo < odd_max + 0.5:
@@ -1056,59 +1055,70 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     dados_faixa = []
     for lo,hi in FAIXAS:
         ap_f = [a for a in df_res if lo <= float(a["odd"]) <= hi]
-        if not ap_f: continue  # pula faixas vazias
+        if not ap_f: continue
         g_f = sum(1 for a in ap_f if a["resultado"]=="ganhou")
         p_f = sum(1 for a in ap_f if a["resultado"]=="perdeu")
         lucro_f = round(sum(lucro_aposta(a) for a in ap_f),2)
         dados_faixa.append((lbl_f(lo,hi), g_f, p_f, lucro_f))
 
-    # Tabela de dados para os gráficos — começa na coluna E para não colidir com métricas
-    data_row = 3
-    hdr_col  = 5  # coluna E
+    # Linha dinâmica: começa após Por Unidade (pu_start + 2 linhas header + nº unidades + 2 de gap)
+    n_unidades = len(por_unidade_e)
+    data_row = pu_start + 2 + n_unidades + 2  # header PU + col header PU + linhas PU + gap
+    hdr_col = 1  # coluna A
+
+    # Título da seção
+    wst.merge_cells(f"A{data_row}:D{data_row}")
+    cell_fo = wst[f"A{data_row}"]
+    cell_fo.value = "POR FAIXA DE ODDS"
+    est(cell_fo, bold=True, bg=DARK, size=11)
+    wst.row_dimensions[data_row].height = 22
+    data_row += 1
+
     headers_f = ["Faixa de Odds","Ganhou","Perdeu","Lucro R$"]
     for c,h in enumerate(headers_f, hdr_col):
         cell = wst.cell(row=data_row, column=c, value=h)
-        est(cell, bold=True, bg=DARK, size=9); cell.border=brd()
+        est(cell, bold=True, bg="1E3A5F", size=9); cell.border=brd()
         wst.row_dimensions[data_row].height=18
+    tbl_hdr_row = data_row
+    data_row += 1
 
     for i,(faixa,g,p,lf) in enumerate(dados_faixa):
-        er = data_row+1+i; rb = WHITE if i%2==0 else ALT
+        er = data_row+i; rb = WHITE if i%2==0 else ALT
         for c,val in enumerate([faixa,g,p,lf], hdr_col):
             cell=wst.cell(row=er,column=c,value=val)
             fc="000000"
             if c==hdr_col+3: fc=cor(val)
             cell.font=Font(name="Arial",size=9,color=fc)
-            cell.alignment=Alignment(horizontal="center",vertical="center")
+            cell.alignment=Alignment(horizontal="center" if c>hdr_col else "left",vertical="center")
             cell.fill=PatternFill("solid",start_color=rb); cell.border=brd()
             if c==hdr_col+3: cell.number_format="#,##0.00"
         wst.row_dimensions[er].height=15
 
-    for i,w in enumerate([14,9,9,12], hdr_col):
-        wst.column_dimensions[get_column_letter(i)].width=w
-
     n = len(dados_faixa)
-    cats = Reference(wst, min_col=hdr_col,   min_row=data_row+1, max_row=data_row+n)
-    d_g  = Reference(wst, min_col=hdr_col+1, min_row=data_row,   max_row=data_row+n)
-    d_p  = Reference(wst, min_col=hdr_col+2, min_row=data_row,   max_row=data_row+n)
-    d_l  = Reference(wst, min_col=hdr_col+3, min_row=data_row,   max_row=data_row+n)
+    cats = Reference(wst, min_col=hdr_col,   min_row=tbl_hdr_row+1, max_row=tbl_hdr_row+n)
+    d_g  = Reference(wst, min_col=hdr_col+1, min_row=tbl_hdr_row,   max_row=tbl_hdr_row+n)
+    d_p  = Reference(wst, min_col=hdr_col+2, min_row=tbl_hdr_row,   max_row=tbl_hdr_row+n)
+    d_l  = Reference(wst, min_col=hdr_col+3, min_row=tbl_hdr_row,   max_row=tbl_hdr_row+n)
 
-    # Gráfico 1 — apostas por faixa (colunas I em diante, linha 3)
+    # Gráfico 1 — apostas por faixa (ao lado direito, col F, mesma linha da tabela)
     bar1 = BarChart(); bar1.type="col"; bar1.grouping="clustered"; bar1.overlap=0
     bar1.title="Apostas por Faixa de Odds"; bar1.style=10
-    bar1.y_axis.title="Apostas"; bar1.width=26; bar1.height=14
+    bar1.y_axis.title="Apostas"; bar1.width=28; bar1.height=14
     bar1.add_data(d_g, titles_from_data=True); bar1.add_data(d_p, titles_from_data=True)
     bar1.set_categories(cats)
     bar1.series[0].graphicalProperties.solidFill="16A34A"
     bar1.series[1].graphicalProperties.solidFill="DC2626"
-    wst.add_chart(bar1, "J3")
+    chart1_anchor = f"F{tbl_hdr_row}"
+    wst.add_chart(bar1, chart1_anchor)
 
-    # Gráfico 2 — lucro por faixa (colunas J em diante, linha 30 aprox — sem sobreposição)
+    # Gráfico 2 — lucro por faixa (abaixo do gráfico 1, ~28 linhas depois)
     bar2 = BarChart(); bar2.type="col"; bar2.grouping="clustered"
     bar2.title="Lucro R$ por Faixa de Odds"; bar2.style=10
-    bar2.y_axis.title="Lucro R$"; bar2.width=26; bar2.height=14
+    bar2.y_axis.title="Lucro R$"; bar2.width=28; bar2.height=14
     bar2.add_data(d_l, titles_from_data=True); bar2.set_categories(cats)
     bar2.series[0].graphicalProperties.solidFill="2563EB"
-    wst.add_chart(bar2, "J33")
+    chart2_row = tbl_hdr_row + 22  # ~22 linhas abaixo do gráfico 1 (14cm ≈ 20 linhas)
+    wst.add_chart(bar2, f"F{chart2_row}")
 
     # ── ABA 3: LUCRO POR DIA ──
     from collections import defaultdict
