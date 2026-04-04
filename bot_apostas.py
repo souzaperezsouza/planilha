@@ -1100,25 +1100,23 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     d_p  = Reference(wst, min_col=hdr_col+2, min_row=tbl_hdr_row,   max_row=tbl_hdr_row+n)
     d_l  = Reference(wst, min_col=hdr_col+3, min_row=tbl_hdr_row,   max_row=tbl_hdr_row+n)
 
-    # Gráfico 1 — apostas por faixa (ao lado direito, col F, mesma linha da tabela)
+    # Gráfico 1 — apostas por faixa (coluna F, mesma linha da tabela)
     bar1 = BarChart(); bar1.type="col"; bar1.grouping="clustered"; bar1.overlap=0
     bar1.title="Apostas por Faixa de Odds"; bar1.style=10
-    bar1.y_axis.title="Apostas"; bar1.width=28; bar1.height=14
+    bar1.y_axis.title="Apostas"; bar1.width=24; bar1.height=14
     bar1.add_data(d_g, titles_from_data=True); bar1.add_data(d_p, titles_from_data=True)
     bar1.set_categories(cats)
     bar1.series[0].graphicalProperties.solidFill="16A34A"
     bar1.series[1].graphicalProperties.solidFill="DC2626"
-    chart1_anchor = f"F{tbl_hdr_row}"
-    wst.add_chart(bar1, chart1_anchor)
+    wst.add_chart(bar1, f"F{tbl_hdr_row}")
 
-    # Gráfico 2 — lucro por faixa (abaixo do gráfico 1, ~28 linhas depois)
+    # Gráfico 2 — lucro por faixa (coluna R, mesma linha — lado a lado com o gráfico 1)
     bar2 = BarChart(); bar2.type="col"; bar2.grouping="clustered"
     bar2.title="Lucro R$ por Faixa de Odds"; bar2.style=10
-    bar2.y_axis.title="Lucro R$"; bar2.width=28; bar2.height=14
+    bar2.y_axis.title="Lucro R$"; bar2.width=24; bar2.height=14
     bar2.add_data(d_l, titles_from_data=True); bar2.set_categories(cats)
     bar2.series[0].graphicalProperties.solidFill="2563EB"
-    chart2_row = tbl_hdr_row + 22  # ~22 linhas abaixo do gráfico 1 (14cm ≈ 20 linhas)
-    wst.add_chart(bar2, f"F{chart2_row}")
+    wst.add_chart(bar2, f"R{tbl_hdr_row}")
 
     # ── ABA 3: LUCRO POR DIA ──
     from collections import defaultdict
