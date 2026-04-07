@@ -16,12 +16,9 @@ TOKEN         = "8790751046:AAG-AsvU3V-K5j4U8IOUQrpT6NXX8K3FcjU"
 DATABASE_URL  = os.environ.get("DATABASE_URL", "postgresql://apostas_db_br3e_user:9Q8kF2084mtEmOESc09jc22ZR7nS5FLz@dpg-d6ub6lfafjfc7380et2g-a/apostas_db_br3e")
 BANCA_INICIAL = 5000
 
-CASAS = ["Bet365","Betano","SportingBet","Novibet","Vaidebet","Betfast","BETesporte",
-         "Betnacional","BetFair","Stake","Pagol","Esportes Da Sorte","Esportivabet","Outra"]
+CORRETORAS = ["XP Investimentos","Clear","Rico","Inter","BTG Pactual","Toro","Genial","Avenue","Ágora","Outra"]
 
-ESPORTES = ["⚽ Futebol","🏀 Basquete","🎾 Tênis","🏒 Hóquei",
-            "🏈 Futebol Americano","⚾ Beisebol","🥊 MMA/Boxe","🏐 Vôlei",
-            "🏎️ F1","🎮 Esports","Outro"]
+SETORES = ["📈 Ações","🏦 FIIs","💰 Renda Fixa","🌐 BDRs","🪙 Cripto","🛢️ Commodities","📊 ETFs","🔧 Derivativos","Outro"]
 
 logging.basicConfig(level=logging.WARNING)
 
@@ -36,9 +33,9 @@ CANCELAR_BTN = "❌ Cancelar"
 # ── TECLADOS ──────────────────────────────────────────────────────────────────
 def teclado_menu():
     return ReplyKeyboardMarkup([
-        ["📝 Nova aposta",   "⏳ Ver pendentes"],
-        ["📈 Resultados",    "✏️ Editar aposta"],
-        ["📊 Gerar Dashboard", "⚙️ Mudar Unidade"],
+        ["📊 Novo Investimento", "📋 Em Aberto"],
+        ["📈 Resultados",        "✏️ Editar"],
+        ["📊 Gerar Relatório"],
     ], resize_keyboard=True)
 
 def teclado_cancelar():
@@ -46,7 +43,7 @@ def teclado_cancelar():
 
 def teclado_resultados():
     return ReplyKeyboardMarkup([
-        ["🏦 Por Casa", "🏅 Por Esporte"],
+        ["🏦 Por Corretora", "📊 Por Setor"],
         ["📅 Por Mês",  "🔙 Voltar"],
     ], resize_keyboard=True)
 
@@ -144,8 +141,8 @@ def set_unidade_atual(valor: float):
         conn.commit()
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
-def normalizar_casa(s):
-    return (s or "").strip().title() or "Sem casa"
+def normalizar_corretora(s):
+    return (s or "").strip().title() or "Sem corretora"
 
 MAPA_ESPORTE = {
     # Futebol
@@ -205,7 +202,7 @@ MAPA_ESPORTE = {
     "🏏 cricket":           "🏏 Cricket",
 }
 
-def normalizar_esporte(s):
+def normalizar_setor(s):
     if not s: return ""
     return MAPA_ESPORTE.get(s.strip().lower(), s.strip())
 
@@ -245,7 +242,7 @@ async def cancelar(update, ctx):
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data.clear()
     await update.message.reply_text(
-        "👋 *Gestor de Apostas*\n\nEscolha uma opção:",
+        "👋 *Gestor de Investimentos*\n\nEscolha uma opção:",
         reply_markup=teclado_menu(), parse_mode="Markdown"
     )
 
@@ -257,30 +254,30 @@ async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if ctx.user_data.get("modo") == "resultados":
         if txt == "🔙 Voltar":
             return await voltar_menu(update, ctx)
-        if txt == "🏦 Por Casa":
-            return await resultados_por_casa(update, ctx)
+        if txt == "🏦 Por Corretora":
+            return await resultados_por_corretora(update, ctx)
         if txt == "📅 Por Mês":
             return await resultados_por_mes(update, ctx)
-        if txt == "🏅 Por Esporte":
-            return await resultados_por_esporte(update, ctx)
+        if txt == "📊 Por Setor":
+            return await resultados_por_setor(update, ctx)
         # Tenta como data
         if await resultados_dia(update, ctx, txt):
             return
         # Se não reconheceu, sai do modo
         ctx.user_data.clear()
 
-    if txt == "📝 Nova aposta":     return await nova_aposta_inicio(update, ctx)
-    if txt == "⏳ Ver pendentes":   return await ver_pendentes(update, ctx)
+    if txt == "📊 Novo Investimento": return await nova_aposta_inicio(update, ctx)
+    if txt == "📋 Em Aberto":         return await ver_pendentes(update, ctx)
     if txt == "📈 Resultados":      return await resultados(update, ctx)
-    if txt == "✏️ Editar aposta":   return await editar_inicio(update, ctx)
-    if txt == "📊 Gerar Dashboard":  return await gerar_dashboard(update, ctx)
-    if txt == "⚙️ Mudar Unidade":   return await mudar_unidade_inicio(update, ctx)
+    if txt == "✏️ Editar":             return await editar_inicio(update, ctx)
+    if txt == "📊 Gerar Relatório":   return await gerar_dashboard(update, ctx)
+    
 
 # ── NOVA APOSTA ───────────────────────────────────────────────────────────────
 async def nova_aposta_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     hoje = datetime.now().strftime("%d/%m/%Y")
     await update.message.reply_text(
-        f"📅 *Data do jogo*\nHoje é *{hoje}* — mande *0* para confirmar ou digite outra (DD/MM/AAAA):",
+        f"📅 *Data*\nHoje é *{hoje}* — mande *0* para confirmar ou digite outra (DD/MM/AAAA):",
         reply_markup=teclado_cancelar(), parse_mode="Markdown"
     )
     return DATA
@@ -302,7 +299,7 @@ async def receber_data(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return DATA
     agora = datetime.now().strftime("%H:%M")
     await update.message.reply_text(
-        f"⏰ *Horário do jogo*\nAgora são *{agora}* — mande *0* para usar ou digite outro (HH:MM):",
+        f"⏰ *Horário*\nAgora são *{agora}* — mande *0* para usar ou digite outro (HH:MM):",
         reply_markup=teclado_cancelar(), parse_mode="Markdown"
     )
     return HORARIO
@@ -316,13 +313,13 @@ async def receber_horario(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             await update.message.reply_text("❌ Use HH:MM ou 0 para agora:")
             return HORARIO
-    await update.message.reply_text("🏷 *Descrição:*", reply_markup=teclado_cancelar(), parse_mode="Markdown")
+    await update.message.reply_text("🏷 *Ativo/Descrição:*", reply_markup=teclado_cancelar(), parse_mode="Markdown")
     return DESCRICAO
 
 async def receber_descricao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.message.text.strip() == CANCELAR_BTN: return await cancelar(update, ctx)
     ctx.user_data["descricao"] = update.message.text.strip()
-    await update.message.reply_text("🔢 *Odd:*", reply_markup=teclado_cancelar(), parse_mode="Markdown")
+    await update.message.reply_text("🔢 *Retorno esperado (ex: 1.85):*", reply_markup=teclado_cancelar(), parse_mode="Markdown")
     return ODD
 
 async def receber_odd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -330,7 +327,7 @@ async def receber_odd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if raw == CANCELAR_BTN: return await cancelar(update, ctx)
     try:
         ctx.user_data["odd"] = float(raw.replace(",", "."))
-        await update.message.reply_text("💰 *Stake (R$):*", reply_markup=teclado_cancelar(), parse_mode="Markdown")
+        await update.message.reply_text("💰 *Valor investido (R$):*", reply_markup=teclado_cancelar(), parse_mode="Markdown")
         return STAKE
     except ValueError:
         await update.message.reply_text("❌ Odd inválida:")
@@ -341,8 +338,8 @@ async def receber_stake(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if raw == CANCELAR_BTN: return await cancelar(update, ctx)
     try:
         ctx.user_data["stake"] = float(raw.replace(",", "."))
-        teclado_esp = [[e] for e in ESPORTES] + [[CANCELAR_BTN]]
-        await update.message.reply_text("🏅 *Esporte:*",
+        teclado_esp = [[e] for e in SETORES] + [[CANCELAR_BTN]]
+        await update.message.reply_text("📊 *Setor:*",
             reply_markup=ReplyKeyboardMarkup(teclado_esp, resize_keyboard=True, one_time_keyboard=True),
             parse_mode="Markdown")
         return ESPORTE
@@ -361,8 +358,8 @@ async def receber_esporte(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return ESPORTE
     else:
         ctx.user_data["esporte"] = raw
-    teclado_casa = [[c] for c in CASAS] + [[CANCELAR_BTN]]
-    await update.message.reply_text("🏦 *Casa de aposta:*",
+    teclado_casa = [[c] for c in CORRETORAS] + [[CANCELAR_BTN]]
+    await update.message.reply_text("🏦 *Corretora:*",
         reply_markup=ReplyKeyboardMarkup(teclado_casa, resize_keyboard=True, one_time_keyboard=True),
         parse_mode="Markdown")
     return CASA
@@ -375,7 +372,7 @@ async def receber_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ctx.user_data["aguardando_casa_custom"] = True
         return CASA
     ctx.user_data.pop("aguardando_casa_custom", False)
-    ctx.user_data["casa"] = casa.strip().title() if casa not in CASAS else casa
+    ctx.user_data["casa"] = casa.strip().title() if casa not in CORRETORAS else casa
 
     new_id = inserir({
         "data": ctx.user_data["data"], "horario": ctx.user_data.get("horario",""),
@@ -386,10 +383,10 @@ async def receber_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     data_fmt = datetime.strptime(ctx.user_data["data"], "%Y-%m-%d").strftime("%d/%m/%Y")
     hora_txt = f" às {ctx.user_data['horario']}" if ctx.user_data.get("horario") else ""
     await update.message.reply_text(
-        f"✅ *Aposta #{new_id} salva!*\n\n"
-        f"📅 {data_fmt}{hora_txt}\n🏅 {ctx.user_data.get('esporte','')}\n"
-        f"🏷 {ctx.user_data['descricao']}\n🔢 Odd: {ctx.user_data['odd']}\n"
-        f"💰 Stake: R$ {float(ctx.user_data['stake']):.2f}\n🏦 Casa: {ctx.user_data['casa']}",
+        f"✅ *Investimento #{new_id} registrado!*\n\n"
+        f"📅 {data_fmt}{hora_txt}\n📊 {ctx.user_data.get('esporte','')}\n"
+        f"🏷 {ctx.user_data['descricao']}\n🔢 Retorno: {ctx.user_data['odd']}\n"
+        f"💰 Valor: R$ {float(ctx.user_data['stake']):.2f}\n🏦 Corretora: {ctx.user_data['casa']}",
         parse_mode="Markdown"
     )
     return await voltar_menu(update, ctx)
@@ -402,7 +399,7 @@ async def ver_pendentes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not pendentes:
         await update.message.reply_text("✅ Nenhuma aposta pendente!")
         return
-    linhas = [f"⏳ *{len(pendentes)} apostas pendentes:*\n"]
+    linhas = [f"📋 *{len(pendentes)} investimentos em aberto:*\n"]
     for a in pendentes:
         data_fmt = a["data"].strftime("%d/%m/%Y") if hasattr(a["data"],"strftime") else str(a["data"])[:10]
         hora = f" {a.get('horario','')}" if a.get("horario") else ""
@@ -438,17 +435,17 @@ async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"⏳ Stake em curso: *R$ {stake_curso:.2f}* ({len(pendentes_ap)} apostas)\n\n"
         f"📅 Digite uma data (DD/MM) para ver aquele dia\n"
         f"📅 *Por Mês* para ver o resumo mensal\n"
-        f"🏦 *Por Casa* | 🏅 *Por Esporte* para ver por categoria\n"
+        f"🏦 *Por Corretora* | 🏅 *Por Esporte* para ver por categoria\n"
         f"🔙 *Voltar* para sair",
         reply_markup=teclado_resultados(), parse_mode="Markdown"
     )
 
-async def resultados_por_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def resultados_por_corretora(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     apostas = carregar()
     res     = [a for a in apostas if a["resultado"] in ("ganhou","perdeu") or eh_cashout(a)]
     casas   = {}
     for a in res:
-        casa = normalizar_casa(a.get("casa"))
+        casa = normalizar_corretora(a.get("casa"))
         if casa not in casas:
             casas[casa] = {"ap":0,"g":0,"stake":0.0,"lucro":0.0}
         c = casas[casa]; c["ap"] += 1; c["stake"] += float(a["stake"])
@@ -457,7 +454,7 @@ async def resultados_por_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         else:
             c["lucro"] -= float(a["stake"])
     ordenadas = sorted(casas.items(), key=lambda x: x[1]["lucro"], reverse=True)
-    linhas    = ["🏦 *Por Casa:*\n"]
+    linhas    = ["🏦 *Por Corretora:*\n"]
     for nome, c in ordenadas:
         roi   = c["lucro"]/c["stake"] if c["stake"] else 0
         emoji = "🟢" if c["lucro"] >= 0 else "🔴"
@@ -502,10 +499,10 @@ async def resultados_por_mes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
     sinal_ac = "+" if acum >= 0 else ""
     linhas.append(f"📊 *Acumulado: {sinal_ac}R$ {acum:.2f}*")
-    linhas.append("\nDigite uma data (DD/MM), 🏦 *Por Casa* ou 🔙 *Voltar*:")
+    linhas.append("\nDigite uma data (DD/MM), 🏦 *Por Corretora* ou 🔙 *Voltar*:")
     await update.message.reply_text("\n".join(linhas), reply_markup=teclado_resultados(), parse_mode="Markdown")
 
-async def resultados_por_esporte(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def resultados_por_setor(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     apostas = carregar()
     res     = [a for a in apostas if a["resultado"] in ("ganhou","perdeu") or eh_cashout(a)]
     if not res:
@@ -513,7 +510,7 @@ async def resultados_por_esporte(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
         return
     esportes = {}
     for a in res:
-        esp = normalizar_esporte(a.get("esporte")) or "Sem esporte"
+        esp = normalizar_setor(a.get("esporte")) or "Sem setor"
         if esp not in esportes:
             esportes[esp] = {"ap":0,"g":0,"stake":0.0,"lucro":0.0}
         e = esportes[esp]; e["ap"] += 1; e["stake"] += float(a["stake"])
@@ -567,7 +564,7 @@ async def resultados_dia(update: Update, ctx: ContextTypes.DEFAULT_TYPE, raw: st
             linhas.append(f"💸 odd {a['odd']} | R${float(a['stake']):.0f} → CO R${cv:.0f} ({s}R$ {l:.2f})\n_{a['descricao']}_\n")
         else:
             linhas.append(f"{emojis_res.get(a['resultado'],'')} odd {a['odd']} | R${float(a['stake']):.0f} → {s}R$ {l:.2f}\n_{a['descricao']}_\n")
-    linhas.append("Digite outra data, 🏦 *Por Casa* ou 🔙 *Voltar*:")
+    linhas.append("Digite outra data, 🏦 *Por Corretora* ou 🔙 *Voltar*:")
     await update.message.reply_text("\n".join(linhas), reply_markup=teclado_resultados(), parse_mode="Markdown")
     return True
 
@@ -575,17 +572,17 @@ async def resultados_dia(update: Update, ctx: ContextTypes.DEFAULT_TYPE, raw: st
 CAMPOS_EDITAVEIS = ["data","horario","descricao","odd","stake","esporte","casa","resultado","cashout","freebet","deletar"]
 CAMPOS_LABEL     = {
     "data":"📅 Data","horario":"⏰ Horário","descricao":"🏷 Descrição",
-    "odd":"🔢 Odd","stake":"💰 Stake","esporte":"🏅 Esporte",
-    "casa":"🏦 Casa","resultado":"📊 Resultado","cashout":"💸 Cashout","freebet":"🎁 Freebet (R$)","deletar":"🗑 Deletar aposta"
+    "odd":"🔢 Retorno Esperado","stake":"💰 Valor (R$)","esporte":"📊 Setor",
+    "casa":"🏦 Corretora","resultado":"📊 Resultado","cashout":"💸 Encerramento Parcial","freebet":"🎁 Bônus (R$)","deletar":"🗑 Deletar investimento"
 }
 
 async def editar_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     apostas   = carregar()
     pendentes = sorted([a for a in apostas if a["resultado"] == "pendente"],
                        key=lambda a: (str(a["data"]), a.get("horario") or ""))
-    linhas = ["✏️ *Editar aposta*\n"]
+    linhas = ["✏️ *Editar Investimento*\n"]
     if pendentes:
-        linhas.append("*Apostas pendentes:*\n")
+        linhas.append("*Investimentos em aberto:*\n")
         for a in pendentes:
             data_fmt = a["data"].strftime("%d/%m") if hasattr(a["data"],"strftime") else str(a["data"])[:10]
             hora = f" {a.get('horario','')}" if a.get("horario") else ""
@@ -593,7 +590,7 @@ async def editar_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         linhas.append("")
     else:
         linhas.append("Nenhuma aposta pendente.\n")
-    linhas.append("Digite o *ID* da aposta que quer editar:")
+    linhas.append("Digite o *ID* do investimento que quer editar:")
     await update.message.reply_text("\n".join(linhas), reply_markup=teclado_cancelar(), parse_mode="Markdown")
     return EDITAR_ID
 
@@ -612,8 +609,8 @@ async def editar_receber_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data["editar_id"] = id_alvo
     data_fmt = aposta["data"].strftime("%d/%m/%Y") if hasattr(aposta["data"],"strftime") else str(aposta["data"])[:10]
     hora = f" {aposta.get('horario','')}" if aposta.get("horario") else ""
-    info = (f"✏️ *Aposta #{id_alvo}*\n\n📅 {data_fmt}{hora}\n🏷 {aposta['descricao']}\n"
-            f"🔢 Odd: {aposta['odd']}\n💰 Stake: R$ {float(aposta['stake']):.2f}\n"
+    info = (f"✏️ *Investimento #{id_alvo}*\n\n📅 {data_fmt}{hora}\n🏷 {aposta['descricao']}\n"
+            f"🔢 Odd: {aposta['odd']}\n💰 Valor: R$ {float(aposta['stake']):.2f}\n"
             f"🏦 Casa: {aposta.get('casa','')}\n📊 Resultado: {aposta['resultado']}\n🎁 Freebet: R$ {float(aposta['freebet'] or 0):.2f}\n\n*Qual campo editar?*")
     teclado = [[CAMPOS_LABEL[c]] for c in CAMPOS_EDITAVEIS] + [[CANCELAR_BTN]]
     await update.message.reply_text(info,
@@ -631,18 +628,18 @@ async def editar_receber_campo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data["editar_campo"] = campo
     if campo == "casa":
         teclado = [[c] for c in CASAS] + [[CANCELAR_BTN]]
-        await update.message.reply_text("🏦 *Nova casa:*",
+        await update.message.reply_text("🏦 *Nova corretora:*",
             reply_markup=ReplyKeyboardMarkup(teclado, resize_keyboard=True, one_time_keyboard=True),
             parse_mode="Markdown")
         return EDITAR_CASA
     if campo == "esporte":
         teclado = [[e] for e in ESPORTES] + [[CANCELAR_BTN]]
-        await update.message.reply_text("🏅 *Novo esporte:*",
+        await update.message.reply_text("📊 *Novo setor:*",
             reply_markup=ReplyKeyboardMarkup(teclado, resize_keyboard=True, one_time_keyboard=True),
             parse_mode="Markdown")
         return EDITAR_CASA
     if campo == "resultado":
-        teclado = [["✅ Ganhou","❌ Perdeu"],["↩️ Void","⏳ Pendente"],[CANCELAR_BTN]]
+        teclado = [["✅ Lucro","❌ Prejuízo"],["↩️ Encerrado","⏳ Em Aberto"],[CANCELAR_BTN]]
         await update.message.reply_text("📊 *Qual o resultado?*",
             reply_markup=ReplyKeyboardMarkup(teclado, resize_keyboard=True, one_time_keyboard=True),
             parse_mode="Markdown")
@@ -651,7 +648,7 @@ async def editar_receber_campo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         aposta_atual = buscar_por_id(ctx.user_data["editar_id"])
         stake_atual  = float(aposta_atual["stake"])
         await update.message.reply_text(
-            f"🎁 *Freebet*\nDigite o valor em R$ que foi freebet nessa aposta.\n"
+            f"🎁 *Bônus*\nDigite o valor em R$ que foi bônus nesse investimento.\n"
             f"Stake total: R$ {stake_atual:.2f}\n"
             f"Digite *0* para remover freebet:",
             reply_markup=teclado_cancelar(), parse_mode="Markdown")
@@ -661,19 +658,19 @@ async def editar_receber_campo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         aposta   = buscar_por_id(id_alvo)
         descr    = str(aposta["descricao"])[:30] if aposta else "?"
         await update.message.reply_text(
-            f"🗑 *Deletar Aposta #{id_alvo}*\n_{descr}_\n\n"
+            f"🗑 *Deletar Investimento #{id_alvo}*\n_{descr}_\n\n"
             f"⚠️ Esta ação é *irreversível*. Digite *SIM* para confirmar:",
             reply_markup=teclado_cancelar(), parse_mode="Markdown")
         return EDITAR_VALOR
     if campo == "cashout":
         await update.message.reply_text(
-            "💸 *Cashout*\nDigite o valor que voce *recebeu* de volta (R$):\n"
+            "💸 *Encerramento Parcial*\nDigite o valor que você *recebeu* de volta (R$):\n"
             "Ex: apostou R$50, fez cashout por R$30 -> digite *30*\n"
             "Se perdeu tudo -> digite *0*",
             reply_markup=teclado_cancelar(), parse_mode="Markdown")
         return EDITAR_VALOR
     dicas = {"data":"Nova data (DD/MM/AAAA) ou 0 para hoje:","horario":"Novo horário (HH:MM) ou 0 para agora:",
-             "descricao":"Nova descrição:","odd":"Nova odd:","stake":"Novo stake (R$):"}
+             "descricao":"Nova descrição:","odd":"Novo retorno esperado:","stake":"Novo valor (R$):"}
     await update.message.reply_text(dicas[campo], reply_markup=teclado_cancelar())
     return EDITAR_VALOR
 
@@ -686,7 +683,7 @@ async def editar_receber_valor(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if campo == "deletar":
         if raw.upper() == "SIM":
             deletar_aposta(id_alvo)
-            await update.message.reply_text(f"🗑 *Aposta #{id_alvo} deletada com sucesso!*", parse_mode="Markdown")
+            await update.message.reply_text(f"🗑 *Investimento #{id_alvo} deletada com sucesso!*", parse_mode="Markdown")
         else:
             await update.message.reply_text("❌ Cancelado. Aposta não deletada.")
         return await voltar_menu(update, ctx)
@@ -726,8 +723,8 @@ async def editar_receber_valor(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             sinal    = "+" if lucro_co >= 0 else ""
             emoji_co = "📈" if lucro_co >= 0 else "📉"
             await update.message.reply_text(
-                f"💸 *Cashout registrado!*\n\n"
-                f"💰 Apostado: R$ {stake:.2f}\n"
+                f"💸 *Encerramento parcial registrado!*\n\n"
+                f"💰 Investido: R$ {stake:.2f}\n"
                 f"💸 Recebido: R$ {recebido:.2f}\n"
                 f"{emoji_co} Resultado: *{sinal}R$ {lucro_co:.2f}*\n"
                 f"📅 Planilhado em: *{agora.strftime('%d/%m/%Y às %H:%M')}*",
@@ -743,7 +740,7 @@ async def editar_receber_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     campo   = ctx.user_data["editar_campo"]
     id_alvo = ctx.user_data["editar_id"]
     if campo == "resultado":
-        mapa = {"✅ Ganhou":"ganhou","❌ Perdeu":"perdeu","↩️ Void":"void","⏳ Pendente":"pendente"}
+        mapa = {"✅ Lucro":"ganhou","❌ Prejuízo":"perdeu","↩️ Encerrado":"void","⏳ Em Aberto":"pendente"}
         valor = mapa.get(raw, raw)
         return await aplicar_edicao(update, ctx, id_alvo, "resultado", valor)
 
@@ -888,7 +885,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ws.row_dimensions[6].height=10
 
     HDR=7; DAT=8
-    headers=["#","Data","Hora","Descricao","Odd","Stake","Esporte","Casa","Resultado","Lucro","Banca","Progressao"]
+    headers=["#","Data","Hora","Descrição","Odd","Stake","Setor","Corretora","Resultado","Lucro","Banca","Progressao"]
     ws.row_dimensions[HDR].height=22
     for c,h in enumerate(headers,1):
         cell=ws.cell(row=HDR,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
@@ -902,8 +899,8 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if res in ("ganhou","perdeu") or eh_cashout(a):
             lucro_a=lucro_aposta(a)
             acum2+=lucro_a; banca_a=round(acum2,2); prog_a=round(acum2/BANCA,4)
-        res_d={"ganhou":"Ganhou","perdeu":"Perdeu","void":"Void","pendente":"Pendente"}.get(res,res)
-        if eh_cashout(a): res_d="Cashout"
+        res_d={"ganhou":"Lucro","perdeu":"Prejuízo","void":"Encerrado","pendente":"Em Aberto"}.get(res,res)
+        if eh_cashout(a): res_d="Enc. Parcial"
         data_fmt=a["data"].strftime("%d/%m/%Y") if hasattr(a["data"],"strftime") else str(a["data"])[:10]
         vals=[a["id"],data_fmt,a.get("horario",""),a["descricao"],a["odd"],a["stake"],
               a.get("esporte",""),a.get("casa",""),res_d,lucro_a,banca_a,prog_a]
@@ -928,7 +925,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     widths=[8,12,11,32,14,12,14,14,13,12,13,12]
     for i,w in enumerate(widths,1): ws.column_dimensions[get_column_letter(i)].width=w
-    ws.merge_cells("A1:L1"); ws["A1"] = "DASHBOARD DE APOSTAS"
+    ws.merge_cells("A1:L1"); ws["A1"] = "DASHBOARD DE INVESTIMENTOS"
     est(ws["A1"], bold=True, bg=DARK, size=16); ws.row_dimensions[1].height=40
 
     # ── ABA 2: ESTATÍSTICAS ──
@@ -1012,10 +1009,10 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     pu_start = 3 + len(metricas) + 2
     wst.row_dimensions[pu_start-1].height = 8
     wst.merge_cells(f"A{pu_start}:C{pu_start}"); cell_pu = wst[f"A{pu_start}"]
-    cell_pu.value = "POR UNIDADE"
+    cell_pu.value = "POR LOTE"
     est(cell_pu, bold=True, bg=DARK, size=11)
     wst.row_dimensions[pu_start].height = 22
-    for col,h in enumerate(["Unidade","Apostas","Ganhou","Perdeu","Stake","Lucro R$","Lucro Units","ROI","Win Rate"],1):
+    for col,h in enumerate(["Unidade","Operações","Lucro","Prejuízo","Stake","Lucro R$","Lucro Units","ROI","Win Rate"],1):
         cell = wst.cell(row=pu_start+1, column=col, value=h)
         est(cell, bold=True, bg="1E3A5F", size=9); cell.border = brd()
         wst.row_dimensions[pu_start+1].height = 18
@@ -1025,7 +1022,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         roi_u = d["lucro"]/d["stake"] if d["stake"] else 0
         wr_u  = d["g"]/d["ap"] if d["ap"] else 0
         lu_u  = d["lucro"]/u_val if u_val else 0
-        for col,val in enumerate([f"R$ {u_val:.0f}/ap",d["ap"],d["g"],d["ap"]-d["g"],round(d["stake"],2),round(d["lucro"],2),round(lu_u,2),roi_u,wr_u],1):
+        for col,val in enumerate([f"R$ {u_val:.0f}/op",d["ap"],d["g"],d["ap"]-d["g"],round(d["stake"],2),round(d["lucro"],2),round(lu_u,2),roi_u,wr_u],1):
             cell = wst.cell(row=er,column=col,value=val); fc="000000"
             if col in (6,7,8): fc=cor(val)
             cell.font=Font(name="Arial",size=9,color=fc)
@@ -1074,7 +1071,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     wst.row_dimensions[data_row].height = 22
     data_row += 1
 
-    headers_f = ["Faixa de Odds","Ganhou","Perdeu","Lucro R$"]
+    headers_f = ["Faixa de Odds","Lucro","Prejuízo","Lucro R$"]
     for c,h in enumerate(headers_f, hdr_col):
         cell = wst.cell(row=data_row, column=c, value=h)
         est(cell, bold=True, bg="1E3A5F", size=9); cell.border=brd()
@@ -1100,23 +1097,25 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     d_p  = Reference(wst, min_col=hdr_col+2, min_row=tbl_hdr_row,   max_row=tbl_hdr_row+n)
     d_l  = Reference(wst, min_col=hdr_col+3, min_row=tbl_hdr_row,   max_row=tbl_hdr_row+n)
 
-    # Gráfico 1 — apostas por faixa (coluna F, mesma linha da tabela)
+    # Gráfico 1 — apostas por faixa (ao lado direito, col F, mesma linha da tabela)
     bar1 = BarChart(); bar1.type="col"; bar1.grouping="clustered"; bar1.overlap=0
     bar1.title="Apostas por Faixa de Odds"; bar1.style=10
-    bar1.y_axis.title="Apostas"; bar1.width=24; bar1.height=14
+    bar1.y_axis.title="Operações"; bar1.width=28; bar1.height=14
     bar1.add_data(d_g, titles_from_data=True); bar1.add_data(d_p, titles_from_data=True)
     bar1.set_categories(cats)
     bar1.series[0].graphicalProperties.solidFill="16A34A"
     bar1.series[1].graphicalProperties.solidFill="DC2626"
-    wst.add_chart(bar1, f"F{tbl_hdr_row}")
+    chart1_anchor = f"F{tbl_hdr_row}"
+    wst.add_chart(bar1, chart1_anchor)
 
-    # Gráfico 2 — lucro por faixa (coluna R, mesma linha — lado a lado com o gráfico 1)
+    # Gráfico 2 — lucro por faixa (abaixo do gráfico 1, ~28 linhas depois)
     bar2 = BarChart(); bar2.type="col"; bar2.grouping="clustered"
     bar2.title="Lucro R$ por Faixa de Odds"; bar2.style=10
-    bar2.y_axis.title="Lucro R$"; bar2.width=24; bar2.height=14
+    bar2.y_axis.title="Lucro R$"; bar2.width=28; bar2.height=14
     bar2.add_data(d_l, titles_from_data=True); bar2.set_categories(cats)
     bar2.series[0].graphicalProperties.solidFill="2563EB"
-    wst.add_chart(bar2, f"R{tbl_hdr_row}")
+    chart2_row = tbl_hdr_row + 22  # ~22 linhas abaixo do gráfico 1 (14cm ≈ 20 linhas)
+    wst.add_chart(bar2, f"F{chart2_row}")
 
     # ── ABA 3: LUCRO POR DIA ──
     from collections import defaultdict
@@ -1126,7 +1125,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     wd=wb.create_sheet("Lucro por Dia")
     wd.merge_cells("A1:D1"); wd["A1"]="LUCRO POR DIA"
     est(wd["A1"],bold=True,bg=DARK,size=14); wd.row_dimensions[1].height=34; wd.row_dimensions[2].height=8
-    for c,h in enumerate(["Data","Apostas","Lucro do Dia","Acumulado"],1):
+    for c,h in enumerate(["Data","Operações","Lucro do Dia","Acumulado"],1):
         cell=wd.cell(row=3,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
     wd.row_dimensions[3].height=22
     acum3=0
@@ -1149,16 +1148,16 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # ── ABA 3: POR CASA ──
     casas={}
     for a in df_res:
-        casa=normalizar_casa(a.get("casa"))
+        casa=normalizar_corretora(a.get("casa"))
         if casa not in casas: casas[casa]={"ap":0,"g":0,"stake":0.0,"lucro":0.0,"lucro_u":0.0}
         c=casas[casa]; c["ap"]+=1; c["stake"]+=float(a["stake"])
         c["lucro"]+=lucro_aposta(a)
         c["lucro_u"]+=lucro_aposta(a)/float(a.get("unidade") or 50)
         if a["resultado"]=="ganhou": c["g"]+=1
     wc=wb.create_sheet("Por Casa")
-    wc.merge_cells("A1:I1"); wc["A1"]="POR CASA"
+    wc.merge_cells("A1:I1"); wc["A1"]="POR CORRETORA"
     est(wc["A1"],bold=True,bg=DARK,size=14); wc.row_dimensions[1].height=34; wc.row_dimensions[2].height=8
-    for c,h in enumerate(["Casa","Apostas","Ganhou","Perdeu","Stake","Lucro R$","Lucro Units","ROI","Win Rate"],1):
+    for c,h in enumerate(["Corretora","Aportes","Lucro","Prejuízo","Stake","Lucro R$","Lucro Units","ROI","Win Rate"],1):
         cell=wc.cell(row=3,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
     wc.row_dimensions[3].height=22
     for i,(nome,c) in enumerate(sorted(casas.items(),key=lambda x:-x[1]["lucro"])):
@@ -1180,16 +1179,16 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # ── ABA 4: POR ESPORTE ──
     esportes={}
     for a in df_res:
-        esp=normalizar_esporte(a.get("esporte")) or "Sem esporte"
+        esp=normalizar_setor(a.get("esporte")) or "Sem setor"
         if esp not in esportes: esportes[esp]={"ap":0,"g":0,"stake":0.0,"lucro":0.0,"lucro_u":0.0}
         e=esportes[esp]; e["ap"]+=1; e["stake"]+=float(a["stake"])
         e["lucro"]+=lucro_aposta(a)
         e["lucro_u"]+=lucro_aposta(a)/float(a.get("unidade") or 50)
         if a["resultado"]=="ganhou": e["g"]+=1
     we=wb.create_sheet("Por Esporte")
-    we.merge_cells("A1:I1"); we["A1"]="POR ESPORTE"
+    we.merge_cells("A1:I1"); we["A1"]="POR ESPORTE/SETOR"
     est(we["A1"],bold=True,bg=DARK,size=14); we.row_dimensions[1].height=34; we.row_dimensions[2].height=8
-    for c,h in enumerate(["Esporte","Apostas","Ganhou","Perdeu","Stake","Lucro R$","Lucro Units","ROI","Win Rate"],1):
+    for c,h in enumerate(["Setor","Operações","Lucro","Prejuízo","Stake","Lucro R$","Lucro Units","ROI","Win Rate"],1):
         cell=we.cell(row=3,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
     we.row_dimensions[3].height=22
     for i,(nome,e) in enumerate(sorted(esportes.items(),key=lambda x:-x[1]["lucro"])):
@@ -1220,7 +1219,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ws2=wb.create_sheet("Por Semana")
     ws2.merge_cells("A1:I1"); ws2["A1"]="POR SEMANA"
     est(ws2["A1"],bold=True,bg=DARK,size=14); ws2.row_dimensions[1].height=34; ws2.row_dimensions[2].height=8
-    for c,h in enumerate(["Semana","Periodo","Apostas","Ganhou","Perdeu","Stake","Lucro R$","Lucro Units","ROI"],1):
+    for c,h in enumerate(["Semana","Periodo","Operações","Lucro","Prejuízo","Stake","Lucro R$","Lucro Units","ROI"],1):
         cell=ws2.cell(row=3,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
     ws2.row_dimensions[3].height=22
     for i,((ano,num),ap) in enumerate(sorted(por_sem.items())):
@@ -1258,7 +1257,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     wm = wb.create_sheet("Por Mes")
     wm.merge_cells("A1:I1"); wm["A1"] = "POR MÊS"
     est(wm["A1"],bold=True,bg=DARK,size=14); wm.row_dimensions[1].height=34; wm.row_dimensions[2].height=8
-    for c,h in enumerate(["Mês","Apostas","Ganhou","Perdeu","Stake","Lucro R$","Lucro Units","ROI","Win Rate"],1):
+    for c,h in enumerate(["Mês","Operações","Lucro","Prejuízo","Stake","Lucro R$","Lucro Units","ROI","Win Rate"],1):
         cell=wm.cell(row=3,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
     wm.row_dimensions[3].height=22
 
@@ -1326,7 +1325,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     nome_arq=f"dashboard_{dt2.now().strftime('%d%m%Y_%H%M')}.xlsx"
     await update.message.reply_document(
         document=InputFile(buf, filename=nome_arq),
-        caption=f"Dashboard gerado! {total} apostas | R$ {lucro_total:.2f} lucro | ROI {roi:+.1%}"
+        caption=f"Relatório gerado! {total} operações | R$ {lucro_total:.2f} lucro | ROI {roi:+.1%}"
     )
 
 # ── EXPORTAR CSV ──────────────────────────────────────────────────────────────
@@ -1343,8 +1342,8 @@ async def exportar_csv(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         data = a["data"].strftime("%Y-%m-%d") if hasattr(a["data"],"strftime") else str(a["data"])
         writer.writerow([a["id"],data,a.get("horario",""),a["descricao"],a["odd"],a["stake"],a["resultado"],a.get("casa",""),a.get("esporte","")])
     csv_bytes = output.getvalue().encode("utf-8")
-    caption   = f"\U0001f4ca apostas.csv\n{total} apostas | {pendentes} pendentes"
-    await update.message.reply_document(document=InputFile(csv_bytes, filename="apostas.csv"), caption=caption)
+    caption   = f"\U0001f4ca investimentos.csv\n{total} apostas | {pendentes} pendentes"
+    await update.message.reply_document(document=InputFile(csv_bytes, filename="investimentos.csv"), caption=caption)
 
 # ── SERVIDOR KEEP-ALIVE ───────────────────────────────────────────────────────
 class PingHandler(BaseHTTPRequestHandler):
@@ -1369,7 +1368,7 @@ def main():
     ]
 
     conv_nova = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^📝 Nova aposta$"), nova_aposta_inicio)],
+        entry_points=[MessageHandler(filters.Regex("^📊 Novo Investimento$"), nova_aposta_inicio)],
         states={
             DATA:      [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_data)],
             HORARIO:   [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_horario)],
@@ -1383,7 +1382,7 @@ def main():
     )
 
     conv_editar = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^✏️ Editar aposta$"), editar_inicio)],
+        entry_points=[MessageHandler(filters.Regex("^✏️ Editar$"), editar_inicio)],
         states={
             EDITAR_ID:    [MessageHandler(filters.TEXT & ~filters.COMMAND, editar_receber_id)],
             EDITAR_CAMPO: [MessageHandler(filters.TEXT & ~filters.COMMAND, editar_receber_campo)],
