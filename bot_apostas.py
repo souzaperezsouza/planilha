@@ -1005,117 +1005,9 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     for i,(label,valor,fmt,cor_v) in enumerate(metricas):
         stat_row(wst, 3+i, label, valor, fmt, cor_v)
 
-    # Por Unidade abaixo das métricas
-    pu_start = 3 + len(metricas) + 2
-    wst.row_dimensions[pu_start-1].height = 8
-    wst.merge_cells(f"A{pu_start}:C{pu_start}"); cell_pu = wst[f"A{pu_start}"]
-    cell_pu.value = "POR LOTE"
-    est(cell_pu, bold=True, bg=DARK, size=11)
-    wst.row_dimensions[pu_start].height = 22
-    for col,h in enumerate(["Unidade","Operações","Lucro","Prejuízo","Stake","Lucro R$","Lucro Units","ROI","Win Rate"],1):
-        cell = wst.cell(row=pu_start+1, column=col, value=h)
-        est(cell, bold=True, bg="1E3A5F", size=9); cell.border = brd()
-        wst.row_dimensions[pu_start+1].height = 18
-    for i,u_val in enumerate(sorted(por_unidade_e.keys())):
-        d = por_unidade_e[u_val]
-        er = pu_start+2+i; rb = WHITE if i%2==0 else ALT
-        roi_u = d["lucro"]/d["stake"] if d["stake"] else 0
-        wr_u  = d["g"]/d["ap"] if d["ap"] else 0
-        lu_u  = d["lucro"]/u_val if u_val else 0
-        for col,val in enumerate([f"R$ {u_val:.0f}/op",d["ap"],d["g"],d["ap"]-d["g"],round(d["stake"],2),round(d["lucro"],2),round(lu_u,2),roi_u,wr_u],1):
-            cell = wst.cell(row=er,column=col,value=val); fc="000000"
-            if col in (6,7,8): fc=cor(val)
-            cell.font=Font(name="Arial",size=9,color=fc)
-            cell.alignment=Alignment(horizontal="center" if col>1 else "left",vertical="center")
-            cell.fill=PatternFill("solid",start_color=rb); cell.border=brd()
-            if col in (5,6): cell.number_format="#,##0.00"
-            if col==7: cell.number_format="+0.00;-0.00;0.00"
-            if col in (8,9): cell.number_format="+0.0%;-0.0%;0.0%"
-        wst.row_dimensions[er].height=18
-
     # Larguras
     wst.column_dimensions["A"].width = 32
     wst.column_dimensions["B"].width = 16
-    for i in range(3,10): wst.column_dimensions[get_column_letter(i)].width = 12
-
-    # ── Gráficos por faixa de odds (0.5 em 0.5, sem faixas vazias) ──
-    odd_max = max((float(a["odd"]) for a in df_res), default=3.5)
-    lo = 1.00
-    FAIXAS = []
-    while lo < odd_max + 0.5:
-        hi = round(lo + 0.49, 2)
-        FAIXAS.append((round(lo,2), hi))
-        lo = round(lo + 0.5, 2)
-
-    def lbl_f(lo,hi): return f"{lo:.2f}-{hi:.2f}"
-
-    dados_faixa = []
-    for lo,hi in FAIXAS:
-        ap_f = [a for a in df_res if lo <= float(a["odd"]) <= hi]
-        if not ap_f: continue
-        g_f = sum(1 for a in ap_f if a["resultado"]=="ganhou")
-        p_f = sum(1 for a in ap_f if a["resultado"]=="perdeu")
-        lucro_f = round(sum(lucro_aposta(a) for a in ap_f),2)
-        dados_faixa.append((lbl_f(lo,hi), g_f, p_f, lucro_f))
-
-    # Linha dinâmica: começa após Por Unidade (pu_start + 2 linhas header + nº unidades + 2 de gap)
-    n_unidades = len(por_unidade_e)
-    data_row = pu_start + 2 + n_unidades + 2  # header PU + col header PU + linhas PU + gap
-    hdr_col = 1  # coluna A
-
-    # Título da seção
-    wst.merge_cells(f"A{data_row}:D{data_row}")
-    cell_fo = wst[f"A{data_row}"]
-    cell_fo.value = "POR FAIXA DE RETORNO"
-    est(cell_fo, bold=True, bg=DARK, size=11)
-    wst.row_dimensions[data_row].height = 22
-    data_row += 1
-
-    headers_f = ["Faixa de Retorno","Lucro","Prejuízo","Lucro R$"]
-    for c,h in enumerate(headers_f, hdr_col):
-        cell = wst.cell(row=data_row, column=c, value=h)
-        est(cell, bold=True, bg="1E3A5F", size=9); cell.border=brd()
-        wst.row_dimensions[data_row].height=18
-    tbl_hdr_row = data_row
-    data_row += 1
-
-    for i,(faixa,g,p,lf) in enumerate(dados_faixa):
-        er = data_row+i; rb = WHITE if i%2==0 else ALT
-        for c,val in enumerate([faixa,g,p,lf], hdr_col):
-            cell=wst.cell(row=er,column=c,value=val)
-            fc="000000"
-            if c==hdr_col+3: fc=cor(val)
-            cell.font=Font(name="Arial",size=9,color=fc)
-            cell.alignment=Alignment(horizontal="center" if c>hdr_col else "left",vertical="center")
-            cell.fill=PatternFill("solid",start_color=rb); cell.border=brd()
-            if c==hdr_col+3: cell.number_format="#,##0.00"
-        wst.row_dimensions[er].height=15
-
-    n = len(dados_faixa)
-    cats = Reference(wst, min_col=hdr_col,   min_row=tbl_hdr_row+1, max_row=tbl_hdr_row+n)
-    d_g  = Reference(wst, min_col=hdr_col+1, min_row=tbl_hdr_row,   max_row=tbl_hdr_row+n)
-    d_p  = Reference(wst, min_col=hdr_col+2, min_row=tbl_hdr_row,   max_row=tbl_hdr_row+n)
-    d_l  = Reference(wst, min_col=hdr_col+3, min_row=tbl_hdr_row,   max_row=tbl_hdr_row+n)
-
-    # Gráfico 1 — apostas por faixa (ao lado direito, col F, mesma linha da tabela)
-    bar1 = BarChart(); bar1.type="col"; bar1.grouping="clustered"; bar1.overlap=0
-    bar1.title="Operações por Faixa de Retorno"; bar1.style=10
-    bar1.y_axis.title="Operações"; bar1.width=28; bar1.height=14
-    bar1.add_data(d_g, titles_from_data=True); bar1.add_data(d_p, titles_from_data=True)
-    bar1.set_categories(cats)
-    bar1.series[0].graphicalProperties.solidFill="16A34A"
-    bar1.series[1].graphicalProperties.solidFill="DC2626"
-    chart1_anchor = f"F{tbl_hdr_row}"
-    wst.add_chart(bar1, chart1_anchor)
-
-    # Gráfico 2 — lucro por faixa (abaixo do gráfico 1, ~28 linhas depois)
-    bar2 = BarChart(); bar2.type="col"; bar2.grouping="clustered"
-    bar2.title="Lucro R$ por Faixa de Retorno"; bar2.style=10
-    bar2.y_axis.title="Lucro R$"; bar2.width=28; bar2.height=14
-    bar2.add_data(d_l, titles_from_data=True); bar2.set_categories(cats)
-    bar2.series[0].graphicalProperties.solidFill="2563EB"
-    chart2_row = tbl_hdr_row + 22  # ~22 linhas abaixo do gráfico 1 (14cm ≈ 20 linhas)
-    wst.add_chart(bar2, f"F{chart2_row}")
 
     # ── ABA 3: LUCRO POR DIA ──
     from collections import defaultdict
@@ -1154,7 +1046,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         c["lucro"]+=lucro_aposta(a)
         c["lucro_u"]+=lucro_aposta(a)/float(a.get("unidade") or 50)
         if a["resultado"]=="ganhou": c["g"]+=1
-    wc=wb.create_sheet("Por Casa")
+    wc=wb.create_sheet("Por Corretora")
     wc.merge_cells("A1:I1"); wc["A1"]="POR CORRETORA"
     est(wc["A1"],bold=True,bg=DARK,size=14); wc.row_dimensions[1].height=34; wc.row_dimensions[2].height=8
     for c,h in enumerate(["Corretora","Aportes","Lucro","Prejuízo","Stake","Lucro R$","Lucro Units","ROI","Win Rate"],1):
@@ -1176,19 +1068,19 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         wc.row_dimensions[er].height=18
     for i,w in enumerate([18,10,10,10,14,14,14,10,12],1): wc.column_dimensions[get_column_letter(i)].width=w
 
-    # ── ABA 4: POR ESPORTE ──
+    # ── ABA 4: POR TIPO DE INVESTIMENTO ──
     esportes={}
     for a in df_res:
-        esp=normalizar_setor(a.get("esporte")) or "Sem setor"
+        esp=normalizar_setor(a.get("esporte")) or "Sem tipo"
         if esp not in esportes: esportes[esp]={"ap":0,"g":0,"stake":0.0,"lucro":0.0,"lucro_u":0.0}
         e=esportes[esp]; e["ap"]+=1; e["stake"]+=float(a["stake"])
         e["lucro"]+=lucro_aposta(a)
         e["lucro_u"]+=lucro_aposta(a)/float(a.get("unidade") or 50)
         if a["resultado"]=="ganhou": e["g"]+=1
-    we=wb.create_sheet("Por Esporte")
-    we.merge_cells("A1:I1"); we["A1"]="POR ESPORTE/SETOR"
+    we=wb.create_sheet("Por Tipo")
+    we.merge_cells("A1:I1"); we["A1"]="POR TIPO DE INVESTIMENTO"
     est(we["A1"],bold=True,bg=DARK,size=14); we.row_dimensions[1].height=34; we.row_dimensions[2].height=8
-    for c,h in enumerate(["Setor","Operações","Lucro","Prejuízo","Stake","Lucro R$","Lucro Units","ROI","Win Rate"],1):
+    for c,h in enumerate(["Tipo","Operações","Lucro","Prejuízo","Valor (R$)","Lucro R$","Lucro Units","ROI","Win Rate"],1):
         cell=we.cell(row=3,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
     we.row_dimensions[3].height=22
     for i,(nome,e) in enumerate(sorted(esportes.items(),key=lambda x:-x[1]["lucro"])):
