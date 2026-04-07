@@ -885,7 +885,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ws.row_dimensions[6].height=10
 
     HDR=7; DAT=8
-    headers=["#","Data","Hora","Descrição","Odd","Stake","Setor","Corretora","Resultado","Lucro","Banca","Progressao"]
+    headers=["#","Data","Hora","Descrição","Retorno","Valor (R$)","Setor","Corretora","Resultado","Lucro","Capital","Progressao"]
     ws.row_dimensions[HDR].height=22
     for c,h in enumerate(headers,1):
         cell=ws.cell(row=HDR,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
@@ -994,13 +994,13 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ("Capital Atual (R$)",         round(capital_atual, 2),      "#,##0.00", True),
         ("Stake Investida Total (R$)",  round(stake_total_e, 2),      "#,##0.00", False),
         ("Stake Média (R$)",            round(stake_media_e, 2),      "#,##0.00", False),
-        ("Odd Média",                   round(odd_media_e, 3),        "0.000",    False),
-        ("Maior Odd Acertada",          round(maior_odd_acert, 3),    "0.000",    False),
+        ("Retorno Médio",                round(odd_media_e, 3),        "0.000",    False),
+        ("Maior Retorno Obtido",         round(maior_odd_acert, 3),    "0.000",    False),
         ("Maior Stake (R$)",            round(maior_stake_val, 2),    "#,##0.00", False),
-        ("Maior Lucro em uma aposta (R$)", round(maior_lucro_e, 2),  "#,##0.00", True),
-        ("Maior Perda em uma aposta (R$)", round(maior_perda_e, 2),  "#,##0.00", True),
-        ("Maior Sequência de Greens",   seq_verde_max,                "0",        False),
-        ("Maior Sequência de Reds",     seq_verm_max,                 "0",        False),
+        ("Maior Lucro em uma operação (R$)", round(maior_lucro_e, 2),  "#,##0.00", True),
+        ("Maior Perda em uma operação (R$)", round(maior_perda_e, 2),  "#,##0.00", True),
+        ("Maior Sequência Positiva",    seq_verde_max,                "0",        False),
+        ("Maior Sequência Negativa",    seq_verm_max,                 "0",        False),
     ]
     for i,(label,valor,fmt,cor_v) in enumerate(metricas):
         stat_row(wst, 3+i, label, valor, fmt, cor_v)
@@ -1066,12 +1066,12 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Título da seção
     wst.merge_cells(f"A{data_row}:D{data_row}")
     cell_fo = wst[f"A{data_row}"]
-    cell_fo.value = "POR FAIXA DE ODDS"
+    cell_fo.value = "POR FAIXA DE RETORNO"
     est(cell_fo, bold=True, bg=DARK, size=11)
     wst.row_dimensions[data_row].height = 22
     data_row += 1
 
-    headers_f = ["Faixa de Odds","Lucro","Prejuízo","Lucro R$"]
+    headers_f = ["Faixa de Retorno","Lucro","Prejuízo","Lucro R$"]
     for c,h in enumerate(headers_f, hdr_col):
         cell = wst.cell(row=data_row, column=c, value=h)
         est(cell, bold=True, bg="1E3A5F", size=9); cell.border=brd()
@@ -1099,7 +1099,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # Gráfico 1 — apostas por faixa (ao lado direito, col F, mesma linha da tabela)
     bar1 = BarChart(); bar1.type="col"; bar1.grouping="clustered"; bar1.overlap=0
-    bar1.title="Apostas por Faixa de Odds"; bar1.style=10
+    bar1.title="Operações por Faixa de Retorno"; bar1.style=10
     bar1.y_axis.title="Operações"; bar1.width=28; bar1.height=14
     bar1.add_data(d_g, titles_from_data=True); bar1.add_data(d_p, titles_from_data=True)
     bar1.set_categories(cats)
@@ -1110,7 +1110,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # Gráfico 2 — lucro por faixa (abaixo do gráfico 1, ~28 linhas depois)
     bar2 = BarChart(); bar2.type="col"; bar2.grouping="clustered"
-    bar2.title="Lucro R$ por Faixa de Odds"; bar2.style=10
+    bar2.title="Lucro R$ por Faixa de Retorno"; bar2.style=10
     bar2.y_axis.title="Lucro R$"; bar2.width=28; bar2.height=14
     bar2.add_data(d_l, titles_from_data=True); bar2.set_categories(cats)
     bar2.series[0].graphicalProperties.solidFill="2563EB"
@@ -1304,13 +1304,13 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     for i,w in enumerate([12,10,10,10,14,14,14,10,12],1): wm.column_dimensions[get_column_letter(i)].width=w
 
     # ── ABA 7: GRAFICO ──
-    wg=wb.create_sheet("Evolucao da Banca")
-    wg["A1"]="Aposta #"; wg["B1"]="Banca Acumulada"
+    wg=wb.create_sheet("Evolucao do Capital")
+    wg["A1"]="Operação #"; wg["B1"]="Capital Acumulado"
     for i,(val) in enumerate(banca_acum,2):
         wg.cell(row=i,column=1,value=i-1); wg.cell(row=i,column=2,value=round(val,2))
     if len(banca_acum)>=2:
-        chart=LineChart(); chart.title="Evolucao da Banca"; chart.style=10
-        chart.y_axis.title="R$"; chart.x_axis.title="Aposta #"
+        chart=LineChart(); chart.title="Evolucao do Capital"; chart.style=10
+        chart.y_axis.title="R$"; chart.x_axis.title="Operação #"
         chart.y_axis.numFmt="#,##0.00"; chart.width=26; chart.height=14
         dr=Reference(wg,min_col=2,min_row=1,max_row=len(banca_acum)+1)
         cr=Reference(wg,min_col=1,min_row=2,max_row=len(banca_acum)+1)
