@@ -428,7 +428,7 @@ async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"{emoji} *Resultados Gerais*\n\n"
         f"💰 Lucro Total: *{sinal}R$ {lucro_total:.2f}*\n"
-        f"📏 Em unidades: *{lucro_unidades:+.2f}u* (1u = R$ {unidade_atual:.0f})\n"
+
         f"📊 ROI: *{roi:+.1%}*\n"
         f"💹 Progressão: *{progressao:+.2%}*\n"
         f"🏆 {vitorias}V / {len(res)-vitorias}D\n"
@@ -495,7 +495,7 @@ async def resultados_por_mes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         linhas.append(
             f"{emoji_m} *{NOMES_MES[mes]}/{ano}*\n"
             f"  {len(ap)} ap | {g_m}V/{len(ap)-g_m}D | ROI {roi_m:+.1%}\n"
-            f"  Lucro: *{sinal_m}R$ {lucro_m:.2f}* ({lucro_u:+.2f}u)\n"
+            f"  Lucro: *{sinal_m}R$ {lucro_m:.2f}*\n"
         )
     sinal_ac = "+" if acum >= 0 else ""
     linhas.append(f"📊 *Acumulado: {sinal_ac}R$ {acum:.2f}*")
@@ -1049,24 +1049,23 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     wc=wb.create_sheet("Por Corretora")
     wc.merge_cells("A1:I1"); wc["A1"]="POR CORRETORA"
     est(wc["A1"],bold=True,bg=DARK,size=14); wc.row_dimensions[1].height=34; wc.row_dimensions[2].height=8
-    for c,h in enumerate(["Corretora","Aportes","Lucro","Prejuízo","Stake","Lucro R$","Lucro Units","ROI","Win Rate"],1):
+    for c,h in enumerate(["Corretora","Aportes","Lucro","Prejuízo","Stake","Lucro R$","ROI","Win Rate"],1):
         cell=wc.cell(row=3,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
     wc.row_dimensions[3].height=22
     for i,(nome,c) in enumerate(sorted(casas.items(),key=lambda x:-x[1]["lucro"])):
         er=4+i; rb=WHITE if i%2==0 else ALT
         roi_c=c["lucro"]/c["stake"] if c["stake"] else 0
         wr_c=c["g"]/c["ap"] if c["ap"] else 0
-        for col,val in enumerate([nome,c["ap"],c["g"],c["ap"]-c["g"],c["stake"],c["lucro"],round(c["lucro_u"],2),roi_c,wr_c],1):
+        for col,val in enumerate([nome,c["ap"],c["g"],c["ap"]-c["g"],c["stake"],c["lucro"],roi_c,wr_c],1):
             cell=wc.cell(row=er,column=col,value=val); fc="000000"
-            if col in (6,7,8): fc=cor(val)
+            if col in (6,7): fc=cor(val)
             cell.font=Font(name="Arial",size=10,color=fc)
             cell.alignment=Alignment(horizontal="left" if col==1 else "center",vertical="center")
             cell.fill=PatternFill("solid",start_color=rb); cell.border=brd()
             if col in (5,6): cell.number_format="#,##0.00"
-            if col==7: cell.number_format="+0.00;-0.00;0.00"
-            if col in (8,9): cell.number_format="+0.0%;-0.0%;0.0%"
+            if col in (7,8): cell.number_format="+0.0%;-0.0%;0.0%"
         wc.row_dimensions[er].height=18
-    for i,w in enumerate([18,10,10,10,14,14,14,10,12],1): wc.column_dimensions[get_column_letter(i)].width=w
+    for i,w in enumerate([18,10,10,10,14,14,10,12],1): wc.column_dimensions[get_column_letter(i)].width=w
 
     # ── ABA 4: POR TIPO DE INVESTIMENTO ──
     esportes={}
@@ -1080,24 +1079,23 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     we=wb.create_sheet("Por Tipo")
     we.merge_cells("A1:I1"); we["A1"]="POR TIPO DE INVESTIMENTO"
     est(we["A1"],bold=True,bg=DARK,size=14); we.row_dimensions[1].height=34; we.row_dimensions[2].height=8
-    for c,h in enumerate(["Tipo","Operações","Lucro","Prejuízo","Valor (R$)","Lucro R$","Lucro Units","ROI","Win Rate"],1):
+    for c,h in enumerate(["Tipo","Operações","Lucro","Prejuízo","Valor (R$)","Lucro R$","ROI","Win Rate"],1):
         cell=we.cell(row=3,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
     we.row_dimensions[3].height=22
     for i,(nome,e) in enumerate(sorted(esportes.items(),key=lambda x:-x[1]["lucro"])):
         er=4+i; rb=WHITE if i%2==0 else ALT
         roi_e=e["lucro"]/e["stake"] if e["stake"] else 0
         wr_e=e["g"]/e["ap"] if e["ap"] else 0
-        for col,val in enumerate([nome,e["ap"],e["g"],e["ap"]-e["g"],e["stake"],e["lucro"],round(e["lucro_u"],2),roi_e,wr_e],1):
+        for col,val in enumerate([nome,e["ap"],e["g"],e["ap"]-e["g"],e["stake"],e["lucro"],roi_e,wr_e],1):
             cell=we.cell(row=er,column=col,value=val); fc="000000"
-            if col in (6,7,8): fc=cor(val)
+            if col in (6,7): fc=cor(val)
             cell.font=Font(name="Arial",size=10,color=fc)
             cell.alignment=Alignment(horizontal="left" if col==1 else "center",vertical="center")
             cell.fill=PatternFill("solid",start_color=rb); cell.border=brd()
             if col in (5,6): cell.number_format="#,##0.00"
-            if col==7: cell.number_format="+0.00;-0.00;0.00"
-            if col in (8,9): cell.number_format="+0.0%;-0.0%;0.0%"
+            if col in (7,8): cell.number_format="+0.0%;-0.0%;0.0%"
         we.row_dimensions[er].height=18
-    for i,w in enumerate([18,10,10,10,14,14,14,10,12],1): we.column_dimensions[get_column_letter(i)].width=w
+    for i,w in enumerate([18,10,10,10,14,14,10,12],1): we.column_dimensions[get_column_letter(i)].width=w
 
     # ── ABA 5: POR SEMANA ──
     def semana_num(dt):
@@ -1111,7 +1109,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ws2=wb.create_sheet("Por Semana")
     ws2.merge_cells("A1:I1"); ws2["A1"]="POR SEMANA"
     est(ws2["A1"],bold=True,bg=DARK,size=14); ws2.row_dimensions[1].height=34; ws2.row_dimensions[2].height=8
-    for c,h in enumerate(["Semana","Periodo","Operações","Lucro","Prejuízo","Stake","Lucro R$","Lucro Units","ROI"],1):
+    for c,h in enumerate(["Semana","Periodo","Operações","Lucro","Prejuízo","Stake","Lucro R$","ROI"],1):
         cell=ws2.cell(row=3,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
     ws2.row_dimensions[3].height=22
     for i,((ano,num),ap) in enumerate(sorted(por_sem.items())):
@@ -1120,23 +1118,21 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         stake_s=sum(float(a["stake"]) for a in ap)
         g_s=sum(1 for a in ap if a["resultado"]=="ganhou")
         roi_s=lucro_s/stake_s if stake_s else 0
-        lucro_u_s=sum(lucro_aposta(a)/float(a.get("unidade") or 50) for a in ap)
         import datetime as dt_mod
         jan1=dt_mod.datetime(ano,1,1); iso1=jan1.isocalendar()
         primeira_seg=jan1-timedelta(days=iso1[2]-1)
         seg=primeira_seg+timedelta(weeks=num-1); sab=seg+timedelta(days=6)
         periodo=f"{seg.strftime('%d/%m')} - {sab.strftime('%d/%m/%Y')}"
-        for col,val in enumerate([f"Semana {num}",periodo,len(ap),g_s,len(ap)-g_s,stake_s,lucro_s,round(lucro_u_s,2),roi_s],1):
+        for col,val in enumerate([f"Semana {num}",periodo,len(ap),g_s,len(ap)-g_s,stake_s,lucro_s,roi_s],1):
             cell=ws2.cell(row=er,column=col,value=val); fc="000000"
-            if col in (7,8,9): fc=cor(val)
+            if col in (7,8): fc=cor(val)
             cell.font=Font(name="Arial",size=10,color=fc)
             cell.alignment=Alignment(horizontal="left" if col==2 else "center",vertical="center")
             cell.fill=PatternFill("solid",start_color=rb); cell.border=brd()
             if col in (6,7): cell.number_format="#,##0.00"
-            if col==8: cell.number_format="+0.00;-0.00;0.00"
-            if col==9: cell.number_format="+0.0%;-0.0%;0.0%"
+            if col==8: cell.number_format="+0.0%;-0.0%;0.0%"
         ws2.row_dimensions[er].height=18
-    for i,w in enumerate([12,22,10,10,10,14,14,14,10],1): ws2.column_dimensions[get_column_letter(i)].width=w
+    for i,w in enumerate([12,22,10,10,10,14,14,10],1): ws2.column_dimensions[get_column_letter(i)].width=w
 
     # ── ABA 6: POR MÊS ──
     from collections import defaultdict as _dd2
@@ -1149,7 +1145,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     wm = wb.create_sheet("Por Mes")
     wm.merge_cells("A1:I1"); wm["A1"] = "POR MÊS"
     est(wm["A1"],bold=True,bg=DARK,size=14); wm.row_dimensions[1].height=34; wm.row_dimensions[2].height=8
-    for c,h in enumerate(["Mês","Operações","Lucro","Prejuízo","Stake","Lucro R$","Lucro Units","ROI","Win Rate"],1):
+    for c,h in enumerate(["Mês","Operações","Lucro","Prejuízo","Stake","Lucro R$","ROI","Win Rate"],1):
         cell=wm.cell(row=3,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
     wm.row_dimensions[3].height=22
 
@@ -1162,24 +1158,21 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         g_m      = sum(1 for a in ap_m if a["resultado"]=="ganhou")
         roi_m    = lucro_m/stake_m if stake_m else 0
         wr_m     = g_m/len(ap_m) if ap_m else 0
-        # Lucro em unidades: cada aposta usa a unidade registrada nela
-        lucro_u_m = sum(lucro_aposta(a)/float(a.get("unidade") or 50) for a in ap_m)
         acum_m  += lucro_m
         er=4+i; rb=WHITE if i%2==0 else ALT
-        for col,val in enumerate([f"{NOMES_MES_XL[mes_m]}/{ano_m}",len(ap_m),g_m,len(ap_m)-g_m,stake_m,lucro_m,round(lucro_u_m,2),roi_m,wr_m],1):
+        for col,val in enumerate([f"{NOMES_MES_XL[mes_m]}/{ano_m}",len(ap_m),g_m,len(ap_m)-g_m,stake_m,lucro_m,roi_m,wr_m],1):
             cell=wm.cell(row=er,column=col,value=val); fc="000000"
-            if col in (6,7,8): fc=cor(val)
+            if col in (6,7): fc=cor(val)
             cell.font=Font(name="Arial",size=10,color=fc)
             cell.alignment=Alignment(horizontal="left" if col==1 else "center",vertical="center")
             cell.fill=PatternFill("solid",start_color=rb); cell.border=brd()
             if col in (5,6): cell.number_format="#,##0.00"
-            if col==7: cell.number_format="+0.00;-0.00;0.00"
-            if col in (8,9): cell.number_format="+0.0%;-0.0%;0.0%"
+            if col in (7,8): cell.number_format="+0.0%;-0.0%;0.0%"
         wm.row_dimensions[er].height=18
 
     # Linha de total
     tr_m = 4+len(por_mes_xl)
-    for col in range(1,10):
+    for col in range(1,9):
         cell=wm.cell(row=tr_m,column=col)
         if col==1: cell.value="TOTAL"
         elif col==2: cell.value=len(df_res)
@@ -1187,13 +1180,10 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         elif col==4: cell.value=sum(1 for a in df_res if a["resultado"]=="perdeu")
         elif col==5: cell.value=round(sum(float(a["stake"]) for a in df_res),2); cell.number_format="#,##0.00"
         elif col==6: cell.value=round(sum(lucro_aposta(a) for a in df_res),2); cell.number_format="#,##0.00"; fc=cor(cell.value); cell.font=Font(name="Arial",bold=True,size=10,color=fc)
-        elif col==7:
-            total_u=sum(lucro_aposta(a)/float(a.get("unidade") or 50) for a in df_res)
-            cell.value=round(total_u,2); cell.number_format="+0.00;-0.00;0.00"; fc=cor(cell.value); cell.font=Font(name="Arial",bold=True,size=10,color=fc)
-        if col not in (6,7): cell.font=Font(name="Arial",bold=True,size=10,color="FFFFFF")
+        if col not in (6,): cell.font=Font(name="Arial",bold=True,size=10,color="FFFFFF")
         est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
     wm.row_dimensions[tr_m].height=22
-    for i,w in enumerate([12,10,10,10,14,14,14,10,12],1): wm.column_dimensions[get_column_letter(i)].width=w
+    for i,w in enumerate([12,10,10,10,14,14,10,12],1): wm.column_dimensions[get_column_letter(i)].width=w
 
     # ── ABA 7: GRAFICO ──
     wg=wb.create_sheet("Evolucao do Capital")
