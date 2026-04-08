@@ -550,6 +550,7 @@ async def resultados_dia(update: Update, ctx: ContextTypes.DEFAULT_TYPE, raw: st
             reply_markup=teclado_resultados())
         return True
     lucro_dia = sum(lucro_aposta(a) for a in do_dia)
+    lucro_u_dia = sum(lucro_aposta(a) / float(a.get("unidade") or 50) for a in do_dia)
     g  = sum(1 for a in do_dia if a["resultado"] == "ganhou")
     p  = sum(1 for a in do_dia if a["resultado"] == "perdeu")
     co = sum(1 for a in do_dia if eh_cashout(a))
@@ -557,16 +558,16 @@ async def resultados_dia(update: Update, ctx: ContextTypes.DEFAULT_TYPE, raw: st
     sinal = "+" if lucro_dia >= 0 else ""
     resumo_str = f"{g}V {p}D"
     if co: resumo_str += f" {co}CO"
-    linhas = [f"{emoji} *{data_obj.strftime('%d/%m/%Y')}* — {resumo_str} — {sinal}R$ {lucro_dia:.2f}\n"]
+    linhas = [f"{emoji} *{data_obj.strftime('%d/%m/%Y')}* — {resumo_str} — {sinal}R$ {lucro_dia:.2f} ({lucro_u_dia:+.2f}u)\n"]
     emojis_res = {"ganhou":"✅","perdeu":"❌"}
     for a in do_dia:
         l = lucro_aposta(a)
         s = "+" if l >= 0 else ""
         if eh_cashout(a):
             cv = float(a.get("cashout_valor") or 0)
-            linhas.append(f"💸 odd {a['odd']} | R${float(a['stake']):.0f} → CO R${cv:.0f} ({s}R$ {l:.2f})\n_{a['descricao']}_\n")
+            linhas.append(f"💸 *#{a['id']}* odd {a['odd']} | R${float(a['stake']):.0f} → CO R${cv:.0f} ({s}R$ {l:.2f})\n_{a['descricao']}_\n")
         else:
-            linhas.append(f"{emojis_res.get(a['resultado'],'')} odd {a['odd']} | R${float(a['stake']):.0f} → {s}R$ {l:.2f}\n_{a['descricao']}_\n")
+            linhas.append(f"{emojis_res.get(a['resultado'],'')} *#{a['id']}* odd {a['odd']} | R${float(a['stake']):.0f} → {s}R$ {l:.2f}\n_{a['descricao']}_\n")
     linhas.append("Digite outra data, 🏦 *Por Casa* ou 🔙 *Voltar*:")
     await update.message.reply_text("\n".join(linhas), reply_markup=teclado_resultados(), parse_mode="Markdown")
     return True
