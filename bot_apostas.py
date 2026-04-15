@@ -17,7 +17,7 @@ DATABASE_URL  = os.environ.get("DATABASE_URL", "postgresql://apostas_db_br3e_use
 BANCA_INICIAL = 5000
 
 CASAS = ["Bet365","Betano","SportingBet","Novibet","Vaidebet","Betfast","BETesporte",
-         "Betnacional","BetFair","Stake","Pagol","Esportes Da Sorte","Esportivabet","Outra"]
+         "Betnacional","BetFair","Stake","Lottu","Esportes Da Sorte","Esportivabet","Outra"]
 
 ESPORTES = ["⚽ Futebol","🏀 Basquete","🎾 Tênis","🏒 Hóquei",
             "🏈 Futebol Americano","⚾ Beisebol","🥊 MMA/Boxe","🏐 Vôlei",
@@ -406,7 +406,7 @@ async def ver_pendentes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     for a in pendentes:
         data_fmt = a["data"].strftime("%d/%m/%Y") if hasattr(a["data"],"strftime") else str(a["data"])[:10]
         hora = f" {a.get('horario','')}" if a.get("horario") else ""
-        linhas.append(f"*#{a['id']}* {data_fmt}{hora} | odd {a['odd']} | R${float(a['stake']):.0f} | {a.get('casa','')}\n_{a['descricao']}_\n")
+        linhas.append(f"*#{a['id']}* {data_fmt}{hora} | odd {float(a['odd']):g} | R${float(a['stake']):.0f} | {a.get('casa','')}\n_{a['descricao']}_\n")
     await update.message.reply_text("\n".join(linhas), parse_mode="Markdown")
 
 # ── RESULTADOS ────────────────────────────────────────────────────────────────
@@ -452,10 +452,8 @@ async def resultados_por_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if casa not in casas:
             casas[casa] = {"ap":0,"g":0,"stake":0.0,"lucro":0.0}
         c = casas[casa]; c["ap"] += 1; c["stake"] += float(a["stake"])
-        if a["resultado"] == "ganhou":
-            c["g"] += 1; c["lucro"] += float(a["stake"]) * (float(a["odd"])-1)
-        else:
-            c["lucro"] -= float(a["stake"])
+        c["lucro"] += lucro_aposta(a)
+        if a["resultado"] == "ganhou": c["g"] += 1
     ordenadas = sorted(casas.items(), key=lambda x: x[1]["lucro"], reverse=True)
     linhas    = ["🏦 *Por Casa:*\n"]
     for nome, c in ordenadas:
@@ -550,7 +548,6 @@ async def resultados_dia(update: Update, ctx: ContextTypes.DEFAULT_TYPE, raw: st
             reply_markup=teclado_resultados())
         return True
     lucro_dia = sum(lucro_aposta(a) for a in do_dia)
-    lucro_u_dia = sum(lucro_aposta(a) / float(a.get("unidade") or 50) for a in do_dia)
     g  = sum(1 for a in do_dia if a["resultado"] == "ganhou")
     p  = sum(1 for a in do_dia if a["resultado"] == "perdeu")
     co = sum(1 for a in do_dia if eh_cashout(a))
@@ -558,16 +555,16 @@ async def resultados_dia(update: Update, ctx: ContextTypes.DEFAULT_TYPE, raw: st
     sinal = "+" if lucro_dia >= 0 else ""
     resumo_str = f"{g}V {p}D"
     if co: resumo_str += f" {co}CO"
-    linhas = [f"{emoji} *{data_obj.strftime('%d/%m/%Y')}* — {resumo_str} — {sinal}R$ {lucro_dia:.2f} ({lucro_u_dia:+.2f}u)\n"]
+    linhas = [f"{emoji} *{data_obj.strftime('%d/%m/%Y')}* — {resumo_str} — {sinal}R$ {lucro_dia:.2f}\n"]
     emojis_res = {"ganhou":"✅","perdeu":"❌"}
     for a in do_dia:
         l = lucro_aposta(a)
         s = "+" if l >= 0 else ""
         if eh_cashout(a):
             cv = float(a.get("cashout_valor") or 0)
-            linhas.append(f"💸 *#{a['id']}* odd {a['odd']} | R${float(a['stake']):.0f} → CO R${cv:.0f} ({s}R$ {l:.2f})\n_{a['descricao']}_\n")
+            linhas.append(f"💸 *#{a['id']}* odd {float(a['odd']):g} | R${float(a['stake']):.0f} → CO R${cv:.0f} ({s}R$ {l:.2f})\n_{a['descricao']}_\n")
         else:
-            linhas.append(f"{emojis_res.get(a['resultado'],'')} *#{a['id']}* odd {a['odd']} | R${float(a['stake']):.0f} → {s}R$ {l:.2f}\n_{a['descricao']}_\n")
+            linhas.append(f"{emojis_res.get(a['resultado'],'')} *#{a['id']}* odd {float(a['odd']):g} | R${float(a['stake']):.0f} → {s}R$ {l:.2f}\n_{a['descricao']}_\n")
     linhas.append("Digite outra data, 🏦 *Por Casa* ou 🔙 *Voltar*:")
     await update.message.reply_text("\n".join(linhas), reply_markup=teclado_resultados(), parse_mode="Markdown")
     return True
@@ -590,7 +587,7 @@ async def editar_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         for a in pendentes:
             data_fmt = a["data"].strftime("%d/%m") if hasattr(a["data"],"strftime") else str(a["data"])[:10]
             hora = f" {a.get('horario','')}" if a.get("horario") else ""
-            linhas.append(f"⏳ *#{a['id']}* {data_fmt}{hora} | odd {a['odd']} | _{str(a['descricao'])[:30]}_")
+            linhas.append(f"⏳ *#{a['id']}* {data_fmt}{hora} | odd {float(a['odd']):g} | _{str(a['descricao'])[:30]}_")
         linhas.append("")
     else:
         linhas.append("Nenhuma aposta pendente.\n")
