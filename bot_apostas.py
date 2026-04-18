@@ -259,7 +259,6 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     txt = update.message.text
 
-    # Modo resultados
     if ctx.user_data.get("modo") == "resultados":
         if txt == "🔙 Voltar":
             return await voltar_menu(update, ctx)
@@ -273,7 +272,6 @@ async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return
         ctx.user_data.clear()
 
-    # Modo gerar — sub-menu de exportação e migração
     if ctx.user_data.get("modo") == "gerar":
         if txt == "🔙 Voltar":
             return await voltar_menu(update, ctx)
@@ -283,12 +281,11 @@ async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             ctx.user_data["aguardando_url_migracao"] = True
             await update.message.reply_text(
                 "📂 *Migrar banco de dados*\n\n"
-                "Cole abaixo a *External URL* do novo banco do Render:\n\n"
-                "_(você encontra em: Render → banco novo → Connections → External Database URL)_",
+                "Cole a *External URL* do novo banco do Render:\n\n"
+                "_(Render → novo banco → Connections → External Database URL)_",
                 reply_markup=teclado_cancelar(), parse_mode="Markdown"
             )
             return
-        # Aguardando URL de migração
         if ctx.user_data.get("aguardando_url_migracao"):
             if txt == CANCELAR_BTN:
                 ctx.user_data.clear()
@@ -834,11 +831,13 @@ async def mudar_unidade_receber(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     return await voltar_menu(update, ctx)
 
-# ── GERAR MENU ───────────────────────────────────────────────────────────────
+# ── GERAR MENU ────────────────────────────────────────────────────────────────
 async def gerar_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data["modo"] = "gerar"
     await update.message.reply_text(
-        "📊 *Exportar / Migrar*\n\nEscolha uma opção:",
+        "📊 *Exportar / Migrar*\n\n"
+        "• *Gerar Resultados* → xlsx com todas as apostas (use para migrar o banco)\n"
+        "• *Gerar Dados* → migra os dados para um novo banco no Render",
         reply_markup=teclado_gerar(), parse_mode="Markdown"
     )
 
@@ -852,6 +851,7 @@ async def executar_migracao(update: Update, ctx: ContextTypes.DEFAULT_TYPE, nova
 
     await update.message.reply_text("⏳ Migrando banco de dados, aguarde...")
     try:
+        # Lê todas as apostas do banco atual (incluindo freebet e unidade)
         conn_orig = psycopg2.connect(DATABASE_URL)
         cur_orig  = conn_orig.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur_orig.execute("SELECT * FROM apostas ORDER BY id ASC")
@@ -884,43 +884,49 @@ async def executar_migracao(update: Update, ctx: ContextTypes.DEFAULT_TYPE, nova
                 valor TEXT NOT NULL
             )
         """)
+        cur_novo.execute("DELETE FROM apostas")
+        cur_novo.execute("DELETE FROM configuracoes")
+
         migradas = 0
         for a in apostas_orig:
             cur_novo.execute("""
                 INSERT INTO apostas
-                    (id,data,horario,descricao,odd,stake,resultado,casa,esporte,freebet,unidade,cashout_valor)
+                    (id,data,horario,descricao,odd,stake,resultado,
+                     casa,esporte,freebet,unidade,cashout_valor)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                ON CONFLICT (id) DO NOTHING
             """, (a["id"], a["data"], a.get("horario"), a["descricao"],
                   a["odd"], a["stake"], a["resultado"], a.get("casa"), a.get("esporte"),
                   float(a.get("freebet") or 0), float(a.get("unidade") or 50),
                   float(a.get("cashout_valor") or 0)))
             migradas += 1
+
         for c in configs_orig:
             cur_novo.execute("""
                 INSERT INTO configuracoes (chave, valor) VALUES (%s,%s)
                 ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor
             """, (c["chave"], c["valor"]))
+
         if apostas_orig:
             max_id = max(a["id"] for a in apostas_orig)
             cur_novo.execute(f"SELECT setval('apostas_id_seq', {max_id})")
+
         conn_novo.commit()
         conn_novo.close()
-
         ctx.user_data.clear()
+
         await update.message.reply_text(
             f"✅ *Migração concluída!*\n\n"
-            f"📊 {migradas} apostas migradas\n"
+            f"📊 {migradas} apostas migradas (com freebet e unidade)\n"
             f"⚙️ {len(configs_orig)} configurações migradas\n\n"
             f"⚠️ *Próximo passo:*\n"
-            f"No Render → seu serviço → *Environment* → `DATABASE_URL`\n"
+            f"Render → seu serviço → *Environment* → `DATABASE_URL`\n"
             f"Troque pela URL do novo banco e faça *Manual Deploy*.",
             reply_markup=teclado_menu(), parse_mode="Markdown"
         )
     except Exception as e:
         ctx.user_data.clear()
         await update.message.reply_text(
-            f"❌ Erro na migração:\n`{str(e)}`\n\nVoltando ao menu.",
+            f"❌ Erro na migração:\n`{str(e)}`",
             reply_markup=teclado_menu(), parse_mode="Markdown"
         )
 
@@ -1004,7 +1010,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ws.row_dimensions[6].height=10
 
     HDR=7; DAT=8
-    headers=["#","Data","Hora","Descricao","Odd","Stake","Esporte","Casa","Resultado","Lucro","Banca","Progressao"]
+    headers=["#","Data","Hora","Descricao","Odd","Stake","Esporte","Casa","Resultado","Lucro","Banca","Progressao","Freebet","Unidade"]
     ws.row_dimensions[HDR].height=22
     for c,h in enumerate(headers,1):
         cell=ws.cell(row=HDR,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
@@ -1021,8 +1027,11 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         res_d={"ganhou":"Ganhou","perdeu":"Perdeu","void":"Void","pendente":"Pendente"}.get(res,res)
         if eh_cashout(a): res_d="Cashout"
         data_fmt=a["data"].strftime("%d/%m/%Y") if hasattr(a["data"],"strftime") else str(a["data"])[:10]
+        freebet_val=float(a.get("freebet") or 0)
+        unidade_val=float(a.get("unidade") or 50)
         vals=[a["id"],data_fmt,a.get("horario",""),a["descricao"],a["odd"],a["stake"],
-              a.get("esporte",""),a.get("casa",""),res_d,lucro_a,banca_a,prog_a]
+              a.get("esporte",""),a.get("casa",""),res_d,lucro_a,banca_a,prog_a,
+              freebet_val if freebet_val>0 else "",unidade_val]
         for c,val in enumerate(vals,1):
             cell=ws.cell(row=er,column=c,value=val)
             fc="000000"
@@ -1031,20 +1040,20 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             cell.font=Font(name="Arial",size=10,color=fc)
             cell.alignment=Alignment(horizontal="left" if c==4 else "center",vertical="center")
             cell.fill=PatternFill("solid",start_color=rb); cell.border=brd()
-            if c in (5,6,10,11) and val!="": cell.number_format="#,##0.00"
+            if c in (5,6,10,11,13) and val!="": cell.number_format="#,##0.00"
             if c==12 and val!="": cell.number_format="+0.00%;-0.00%;0.00%"
 
     tr=DAT+len(apostas_ord); ws.row_dimensions[tr].height=20
-    for c in range(1,13):
+    for c in range(1,15):
         cell=ws.cell(row=tr,column=c)
         if c==4: cell.value="TOTAL"
         elif c==6: cell.value=f"=SUM(F{DAT}:F{tr-1})"; cell.number_format="#,##0.00"
         elif c==10: cell.value=f"=SUM(J{DAT}:J{tr-1})"; cell.number_format="#,##0.00"
         est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
 
-    widths=[8,12,11,32,14,12,14,14,13,12,13,12]
+    widths=[8,12,11,32,14,12,14,14,13,12,13,12,10,10]
     for i,w in enumerate(widths,1): ws.column_dimensions[get_column_letter(i)].width=w
-    ws.merge_cells("A1:L1"); ws["A1"] = "DASHBOARD DE APOSTAS"
+    ws.merge_cells("A1:N1"); ws["A1"] = "DASHBOARD DE APOSTAS"
     est(ws["A1"], bold=True, bg=DARK, size=16); ws.row_dimensions[1].height=40
 
     # ── ABA 2: ESTATÍSTICAS ──
