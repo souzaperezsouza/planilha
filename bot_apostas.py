@@ -38,7 +38,7 @@ def teclado_menu():
     return ReplyKeyboardMarkup([
         ["📝 Nova aposta",   "⏳ Ver pendentes"],
         ["📈 Resultados",    "✏️ Editar aposta"],
-        ["📊 Gerar Dashboard", "⚙️ Mudar Unidade"],
+        ["📊 Gerar Resultados", "⚙️ Mudar Unidade"],
     ], resize_keyboard=True)
 
 def teclado_cancelar():
@@ -48,6 +48,12 @@ def teclado_resultados():
     return ReplyKeyboardMarkup([
         ["🏦 Por Casa", "🏅 Por Esporte"],
         ["📅 Por Mês",  "🔙 Voltar"],
+    ], resize_keyboard=True)
+
+def teclado_gerar():
+    return ReplyKeyboardMarkup([
+        ["📊 Gerar Resultados", "📂 Gerar Dados"],
+        ["🔙 Voltar"],
     ], resize_keyboard=True)
 
 # ── BANCO DE DADOS ────────────────────────────────────────────────────────────
@@ -253,7 +259,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     txt = update.message.text
 
-    # Modo resultados — trata inputs dentro do contexto
+    # Modo resultados
     if ctx.user_data.get("modo") == "resultados":
         if txt == "🔙 Voltar":
             return await voltar_menu(update, ctx)
@@ -263,18 +269,40 @@ async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return await resultados_por_mes(update, ctx)
         if txt == "🏅 Por Esporte":
             return await resultados_por_esporte(update, ctx)
-        # Tenta como data
         if await resultados_dia(update, ctx, txt):
             return
-        # Se não reconheceu, sai do modo
         ctx.user_data.clear()
 
-    if txt == "📝 Nova aposta":     return await nova_aposta_inicio(update, ctx)
-    if txt == "⏳ Ver pendentes":   return await ver_pendentes(update, ctx)
-    if txt == "📈 Resultados":      return await resultados(update, ctx)
-    if txt == "✏️ Editar aposta":   return await editar_inicio(update, ctx)
-    if txt == "📊 Gerar Dashboard":  return await gerar_dashboard(update, ctx)
-    if txt == "⚙️ Mudar Unidade":   return await mudar_unidade_inicio(update, ctx)
+    # Modo gerar — sub-menu de exportação e migração
+    if ctx.user_data.get("modo") == "gerar":
+        if txt == "🔙 Voltar":
+            return await voltar_menu(update, ctx)
+        if txt == "📊 Gerar Resultados":
+            return await gerar_dashboard(update, ctx)
+        if txt == "📂 Gerar Dados":
+            ctx.user_data["aguardando_url_migracao"] = True
+            await update.message.reply_text(
+                "📂 *Migrar banco de dados*\n\n"
+                "Cole abaixo a *External URL* do novo banco do Render:\n\n"
+                "_(você encontra em: Render → banco novo → Connections → External Database URL)_",
+                reply_markup=teclado_cancelar(), parse_mode="Markdown"
+            )
+            return
+        # Aguardando URL de migração
+        if ctx.user_data.get("aguardando_url_migracao"):
+            if txt == CANCELAR_BTN:
+                ctx.user_data.clear()
+                await update.message.reply_text("❌ Cancelado.", reply_markup=teclado_menu())
+                return
+            return await executar_migracao(update, ctx, txt)
+        ctx.user_data.clear()
+
+    if txt == "📝 Nova aposta":      return await nova_aposta_inicio(update, ctx)
+    if txt == "⏳ Ver pendentes":    return await ver_pendentes(update, ctx)
+    if txt == "📈 Resultados":       return await resultados(update, ctx)
+    if txt == "✏️ Editar aposta":    return await editar_inicio(update, ctx)
+    if txt == "📊 Gerar Resultados": return await gerar_menu(update, ctx)
+    if txt == "⚙️ Mudar Unidade":    return await mudar_unidade_inicio(update, ctx)
 
 # ── NOVA APOSTA ───────────────────────────────────────────────────────────────
 async def nova_aposta_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -805,6 +833,96 @@ async def mudar_unidade_receber(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
     return await voltar_menu(update, ctx)
+
+# ── GERAR MENU ───────────────────────────────────────────────────────────────
+async def gerar_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ctx.user_data["modo"] = "gerar"
+    await update.message.reply_text(
+        "📊 *Exportar / Migrar*\n\nEscolha uma opção:",
+        reply_markup=teclado_gerar(), parse_mode="Markdown"
+    )
+
+async def executar_migracao(update: Update, ctx: ContextTypes.DEFAULT_TYPE, nova_url: str):
+    if not nova_url.startswith("postgresql://"):
+        await update.message.reply_text(
+            "❌ URL inválida. Deve começar com `postgresql://`\nTente novamente:",
+            parse_mode="Markdown"
+        )
+        return
+
+    await update.message.reply_text("⏳ Migrando banco de dados, aguarde...")
+    try:
+        conn_orig = psycopg2.connect(DATABASE_URL)
+        cur_orig  = conn_orig.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur_orig.execute("SELECT * FROM apostas ORDER BY id ASC")
+        apostas_orig = [dict(r) for r in cur_orig.fetchall()]
+        cur_orig.execute("SELECT * FROM configuracoes")
+        configs_orig = [dict(r) for r in cur_orig.fetchall()]
+        conn_orig.close()
+
+        conn_novo = psycopg2.connect(nova_url)
+        cur_novo  = conn_novo.cursor()
+        cur_novo.execute("""
+            CREATE TABLE IF NOT EXISTS apostas (
+                id            SERIAL PRIMARY KEY,
+                data          DATE NOT NULL,
+                horario       VARCHAR(5),
+                descricao     TEXT NOT NULL,
+                odd           NUMERIC(8,3) NOT NULL,
+                stake         NUMERIC(10,2) NOT NULL,
+                resultado     VARCHAR(10) DEFAULT 'pendente',
+                casa          VARCHAR(50),
+                esporte       VARCHAR(50),
+                freebet       NUMERIC(10,2) DEFAULT 0,
+                unidade       NUMERIC(10,2) DEFAULT 50,
+                cashout_valor NUMERIC(10,2) DEFAULT 0
+            )
+        """)
+        cur_novo.execute("""
+            CREATE TABLE IF NOT EXISTS configuracoes (
+                chave VARCHAR(50) PRIMARY KEY,
+                valor TEXT NOT NULL
+            )
+        """)
+        migradas = 0
+        for a in apostas_orig:
+            cur_novo.execute("""
+                INSERT INTO apostas
+                    (id,data,horario,descricao,odd,stake,resultado,casa,esporte,freebet,unidade,cashout_valor)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (id) DO NOTHING
+            """, (a["id"], a["data"], a.get("horario"), a["descricao"],
+                  a["odd"], a["stake"], a["resultado"], a.get("casa"), a.get("esporte"),
+                  float(a.get("freebet") or 0), float(a.get("unidade") or 50),
+                  float(a.get("cashout_valor") or 0)))
+            migradas += 1
+        for c in configs_orig:
+            cur_novo.execute("""
+                INSERT INTO configuracoes (chave, valor) VALUES (%s,%s)
+                ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor
+            """, (c["chave"], c["valor"]))
+        if apostas_orig:
+            max_id = max(a["id"] for a in apostas_orig)
+            cur_novo.execute(f"SELECT setval('apostas_id_seq', {max_id})")
+        conn_novo.commit()
+        conn_novo.close()
+
+        ctx.user_data.clear()
+        await update.message.reply_text(
+            f"✅ *Migração concluída!*\n\n"
+            f"📊 {migradas} apostas migradas\n"
+            f"⚙️ {len(configs_orig)} configurações migradas\n\n"
+            f"⚠️ *Próximo passo:*\n"
+            f"No Render → seu serviço → *Environment* → `DATABASE_URL`\n"
+            f"Troque pela URL do novo banco e faça *Manual Deploy*.",
+            reply_markup=teclado_menu(), parse_mode="Markdown"
+        )
+    except Exception as e:
+        ctx.user_data.clear()
+        await update.message.reply_text(
+            f"❌ Erro na migração:\n`{str(e)}`\n\nVoltando ao menu.",
+            reply_markup=teclado_menu(), parse_mode="Markdown"
+        )
 
 # ── GERAR DASHBOARD ───────────────────────────────────────────────────────────
 async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
