@@ -870,200 +870,97 @@ async def gerar_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 async def gerar_xlsx_dados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Gera xlsx com dados brutos (freebet + unidade) para uso no migrar_db.py."""
-    await update.message.reply_text("⏳ Gerando arquivo de dados, aguarde...")
+    """Gera o migrar_db.py pronto para uso no próximo mês."""
+    await update.message.reply_text("⏳ Gerando script de migração, aguarde...")
     try:
-        import openpyxl
-        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-        from openpyxl.utils import get_column_letter
-
         apostas = carregar()
-        apostas_ord = sorted(apostas, key=lambda a: (str(a["data"]), a.get("horario") or "99:99", int(a["id"])))
         unidade_atual = get_unidade_atual()
-
-        DARK = "1E293B"; WHITE = "FFFFFF"; ALT = "EFF6FF"; BORDER_C = "CBD5E1"
-        def est(cell, bold=False, fc="FFFFFF", bg=None, size=10):
-            cell.font = Font(name="Arial", bold=bold, color=fc, size=size)
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            if bg: cell.fill = PatternFill("solid", start_color=bg)
-        def brd():
-            s = Side(style="thin", color=BORDER_C)
-            return Border(left=s, right=s, top=s, bottom=s)
-
-        wb = openpyxl.Workbook()
-        ws = wb.active; ws.title = "Dados"
-
-        ws.merge_cells("A1:N1"); ws["A1"] = "DADOS PARA MIGRAÇÃO"
-        est(ws["A1"], bold=True, bg=DARK, size=13); ws.row_dimensions[1].height=36
-        ws.row_dimensions[2].height = 6
-
-        headers = ["#","Data","Hora","Descricao","Odd","Stake","Esporte","Casa","Resultado","Lucro","Freebet","Unidade","Cashout Valor","ID Seq"]
-        ws.row_dimensions[3].height = 22
-        for c, h in enumerate(headers, 1):
-            cell = ws.cell(row=3, column=c, value=h)
-            est(cell, bold=True, bg=DARK); cell.border = brd()
-
-        MAPA_RES = {"ganhou":"Ganhou","perdeu":"Perdeu","void":"Void","pendente":"Pendente"}
-        lucro_acum = 0
-        for i, a in enumerate(apostas_ord):
-            er = 4 + i; ws.row_dimensions[er].height = 18
-            rb = WHITE if i % 2 == 0 else ALT
-            res = a["resultado"]
-
-            lucro_a = ""
-            if res in ("ganhou","perdeu") or eh_cashout(a):
-                lucro_a = round(lucro_aposta(a), 2)
-                lucro_acum += lucro_a
-
-            res_d = MAPA_RES.get(res, res)
-            if eh_cashout(a): res_d = "Cashout"
-            data_fmt = a["data"].strftime("%d/%m/%Y") if hasattr(a["data"],"strftime") else str(a["data"])[:10]
-
-            vals = [
-                a["id"], data_fmt, a.get("horario",""), a["descricao"],
-                float(a["odd"]), float(a["stake"]), a.get("esporte",""), a.get("casa",""),
-                res_d, lucro_a,
-                float(a.get("freebet") or 0), float(a.get("unidade") or 50),
-                float(a.get("cashout_valor") or 0), a["id"]
-            ]
-            for c, val in enumerate(vals, 1):
-                cell = ws.cell(row=er, column=c, value=val)
-                cell.font = Font(name="Arial", size=10, color="000000")
-                cell.alignment = Alignment(horizontal="left" if c==4 else "center", vertical="center")
-                cell.fill = PatternFill("solid", start_color=rb); cell.border = brd()
-                if c in (5,6,10,11,12,13) and val != "": cell.number_format = "#,##0.00"
-
-        # Info de unidade atual na última linha
-        info_row = 4 + len(apostas_ord) + 1
-        ws.cell(row=info_row, column=1, value="unidade_atual").font = Font(name="Arial", bold=True, size=10)
-        ws.cell(row=info_row, column=2, value=unidade_atual).font = Font(name="Arial", bold=True, size=10)
-
-        widths = [8,12,10,32,10,10,14,14,12,10,10,10,12,8]
-        for i, w in enumerate(widths, 1): ws.column_dimensions[get_column_letter(i)].width = w
-
-        buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+        max_id = max((a["id"] for a in apostas), default=0)
+        total = len(apostas)
         from datetime import datetime as dt2
-        import zipfile
-        nome_xlsx = f"dados_{dt2.now().strftime('%d%m%Y_%H%M')}.xlsx"
 
-        # Gera o migrar_db.py com o nome do xlsx já preenchido
         script = f'''"""
 Migração de banco de dados — Bot Apostas
-Coloque esse arquivo e o {nome_xlsx} na mesma pasta e rode:
-  python migrar_db.py
+Gerado em {dt2.now().strftime("%d/%m/%Y %H:%M")} | {total} apostas | unidade atual: R$ {unidade_atual:.0f}
+
+Como usar:
+  1. Troque NEW_URL pela Internal URL do banco novo (Render → banco novo → Connections → Internal Database URL)
+  2. Render → suspenda o banco atual → ative o banco novo
+  3. No CMD:
+       cd C:\\\\Users\\\\enzop\\\\Downloads
+       python migrar_db.py
+  4. Render → seu serviço → Environment → DATABASE_URL
+     Troque pela Internal URL do banco novo → Save Changes → Manual Deploy
 """
-import os, psycopg2, pandas as pd
-from datetime import datetime
+import psycopg2
+import psycopg2.extras
 
-XLSX_FILE = "{nome_xlsx}"
-NEW_URL   = "COLE_AQUI_A_EXTERNAL_URL_DO_BANCO_NOVO"  # <-- troque isso
-
-MAPA_RESULTADO = {{"ganhou":"ganhou","perdeu":"perdeu","pendente":"pendente","void":"void","cashout":"void"}}
-
-def parse_data(val):
-    if not val or str(val).strip() in ("", "nan"): return None
-    for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
-        try: return datetime.strptime(str(val).strip(), fmt).strftime("%Y-%m-%d")
-        except: pass
-    return None
-
-def sf(val, d=0.0):
-    try:
-        f = float(val); return d if f != f else f
-    except: return d
-
-def limpar(val):
-    s = str(val).strip(); return None if s in ("nan","None","") else s
+OLD_URL = "{DATABASE_URL}"
+NEW_URL = "COLE_AQUI_A_INTERNAL_URL_DO_BANCO_NOVO"  # <-- troque isso
 
 if __name__ == "__main__":
-    if NEW_URL == "COLE_AQUI_A_EXTERNAL_URL_DO_BANCO_NOVO":
-        print("❌ Troque NEW_URL pela External URL do novo banco antes de rodar.")
-        exit(1)
-    if not os.path.exists(XLSX_FILE):
-        print(f"❌ Arquivo {{XLSX_FILE}} nao encontrado.")
+    if NEW_URL == "COLE_AQUI_A_INTERNAL_URL_DO_BANCO_NOVO":
+        print("❌ Troque NEW_URL pela Internal URL do novo banco antes de rodar.")
         exit(1)
 
-    print(f"Lendo {{XLSX_FILE}}...")
-    df = pd.read_excel(XLSX_FILE, sheet_name="Dados", header=2)
-    df.columns = ["id","data","horario","descricao","odd","stake","esporte","casa","resultado",
-                  "lucro","freebet","unidade","cashout_valor","id_seq"]
-    df = df[pd.to_numeric(df["id"], errors="coerce").notna()].copy()
-    df["id"] = df["id"].astype(int)
-
-    # Lê unidade_atual da linha extra no final
-    df_raw = pd.read_excel(XLSX_FILE, sheet_name="Dados", header=None)
-    unidade_atual = "60"
-    for _, row in df_raw.iterrows():
-        if str(row.iloc[0]).strip() == "unidade_atual":
-            unidade_atual = str(row.iloc[1]).strip().rstrip(".0") or "60"
-            break
-
-    apostas = []
-    for _, row in df.iterrows():
-        rr = str(row["resultado"]).strip().lower()
-        resultado_db = MAPA_RESULTADO.get(rr, "pendente")
-        stake = sf(row["stake"]); lucro = sf(row["lucro"])
-        cashout_valor = sf(row["cashout_valor"])
-        if rr == "cashout" and cashout_valor == 0:
-            cashout_valor = stake + lucro
-        apostas.append({{
-            "id": row["id"], "data": parse_data(row["data"]),
-            "horario": limpar(row["horario"]), "descricao": str(row["descricao"]).strip(),
-            "odd": sf(row["odd"]), "stake": stake, "resultado": resultado_db,
-            "casa": limpar(row["casa"]), "esporte": limpar(row["esporte"]),
-            "freebet": sf(row["freebet"]), "unidade": sf(row["unidade"]) or 60.0,
-            "cashout_valor": cashout_valor,
-        }})
-    print(f"   {{len(apostas)}} apostas lidas.")
+    print("Conectando ao banco atual...")
+    conn_old = psycopg2.connect(OLD_URL)
+    cur_old  = conn_old.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur_old.execute("SELECT * FROM apostas ORDER BY id ASC")
+    apostas  = [dict(r) for r in cur_old.fetchall()]
+    cur_old.execute("SELECT * FROM configuracoes")
+    configs  = [dict(r) for r in cur_old.fetchall()]
+    cur_old.execute("SELECT valor FROM configuracoes WHERE chave=\'unidade_atual\'")
+    row_u    = cur_old.fetchone()
+    unidade  = row_u["valor"] if row_u else "{unidade_atual:.0f}"
+    conn_old.close()
+    print(f"  {{len(apostas)}} apostas lidas | unidade atual: R$ {{unidade}}")
 
     print("Conectando ao banco novo...")
-    conn = psycopg2.connect(NEW_URL)
-    cur  = conn.cursor()
-    cur.execute("""CREATE TABLE IF NOT EXISTS apostas (
+    conn_new = psycopg2.connect(NEW_URL)
+    cur_new  = conn_new.cursor()
+    cur_new.execute("""CREATE TABLE IF NOT EXISTS apostas (
         id SERIAL PRIMARY KEY, data DATE NOT NULL, horario VARCHAR(5),
         descricao TEXT NOT NULL, odd NUMERIC(8,3) NOT NULL, stake NUMERIC(10,2) NOT NULL,
         resultado VARCHAR(10) DEFAULT \'pendente\', casa VARCHAR(50), esporte VARCHAR(50),
         freebet NUMERIC(10,2) DEFAULT 0, unidade NUMERIC(10,2) DEFAULT 50,
         cashout_valor NUMERIC(10,2) DEFAULT 0)""")
-    cur.execute("""CREATE TABLE IF NOT EXISTS configuracoes (
+    cur_new.execute("""CREATE TABLE IF NOT EXISTS configuracoes (
         chave VARCHAR(50) PRIMARY KEY, valor TEXT NOT NULL)""")
-    cur.execute("DELETE FROM apostas")
-    cur.execute("DELETE FROM configuracoes")
-    cur.execute("INSERT INTO configuracoes (chave,valor) VALUES (\'unidade_atual\',%s)", (unidade_atual,))
+    cur_new.execute("DELETE FROM apostas")
+    cur_new.execute("DELETE FROM configuracoes")
 
-    inseridas = 0
     for a in apostas:
-        if not a["data"]: continue
-        cur.execute("""INSERT INTO apostas
+        cur_new.execute("""INSERT INTO apostas
             (id,data,horario,descricao,odd,stake,resultado,casa,esporte,freebet,unidade,cashout_valor)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (a["id"],a["data"],a["horario"],a["descricao"],a["odd"],a["stake"],a["resultado"],
-             a["casa"],a["esporte"],a["freebet"],a["unidade"],a["cashout_valor"]))
-        inseridas += 1
+            (a["id"],a["data"],a.get("horario"),a["descricao"],a["odd"],a["stake"],
+             a["resultado"],a.get("casa"),a.get("esporte"),
+             float(a.get("freebet") or 0), float(a.get("unidade") or 50),
+             float(a.get("cashout_valor") or 0)))
+
+    for c in configs:
+        cur_new.execute("""INSERT INTO configuracoes (chave,valor) VALUES (%s,%s)
+            ON CONFLICT (chave) DO UPDATE SET valor=EXCLUDED.valor""",
+            (c["chave"], c["valor"]))
+    cur_new.execute("""INSERT INTO configuracoes (chave,valor) VALUES (\'unidade_atual\',%s)
+        ON CONFLICT (chave) DO UPDATE SET valor=EXCLUDED.valor""", (unidade,))
 
     if apostas:
-        max_id = max(a["id"] for a in apostas)
-        cur.execute(f"SELECT setval(\'apostas_id_seq\', {{max_id}})")
+        cur_new.execute("SELECT setval(\'apostas_id_seq\', %s)", (max(a["id"] for a in apostas),))
 
-    conn.commit(); conn.close()
-    print(f"\\n✅ {{inseridas}} apostas inseridas | unidade_atual: R$ {{unidade_atual}}")
-    print("\\n>> PROXIMO PASSO:")
-    print("   Render -> seu servico -> Environment -> DATABASE_URL")
-    print("   Troque pela Internal URL do banco novo + Save Changes + Manual Deploy")
+    conn_new.commit(); conn_new.close()
+    print(f"\\n✅ {{len(apostas)}} apostas migradas | unidade: R$ {{unidade}}")
+    print("\\nAgora faça o Manual Deploy no Render com a nova DATABASE_URL.")
 '''
 
-        # Empacota xlsx + script num zip
-        zip_buf = io.BytesIO()
-        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr(nome_xlsx, buf.getvalue())
-            zf.writestr("migrar_db.py", script)
-        zip_buf.seek(0)
-
+        script_bytes = script.encode("utf-8")
         instrucoes = (
-            "📂 *Arquivo de migração gerado!*\n\n"
+            "📂 *Script de migração gerado!*\n\n"
+            f"_{total} apostas | unidade atual: R$ {unidade_atual:.0f}_\n\n"
             "*Como usar no próximo mês:*\n\n"
-            "1️⃣ Extraia o zip na pasta Downloads\n"
-            "2️⃣ No `migrar\\_db.py`, troque `NEW\\_URL` pela External URL do banco novo\n"
+            "1️⃣ Salve o `migrar\\_db.py` na pasta Downloads\n"
+            "2️⃣ Abra o arquivo e troque `NEW\\_URL` pela *Internal URL* do banco novo\n"
             "3️⃣ Render → suspenda o banco atual → ative o banco novo\n"
             "4️⃣ No CMD:\n"
             "   `cd C:\\\\Users\\\\enzop\\\\Downloads`\n"
@@ -1071,15 +968,14 @@ if __name__ == "__main__":
             "5️⃣ Render → seu serviço → Environment → `DATABASE\\_URL`\n"
             "   Troque pela *Internal URL* do banco novo → *Manual Deploy*"
         )
-        nome_zip = f"migracao_{dt2.now().strftime('%d%m%Y_%H%M')}.zip"
         await update.message.reply_document(
-            document=InputFile(zip_buf, filename=nome_zip),
+            document=InputFile(io.BytesIO(script_bytes), filename="migrar_db.py"),
             caption=instrucoes,
             parse_mode="Markdown",
             reply_markup=teclado_gerar()
         )
     except Exception as e:
-        await update.message.reply_text(f"❌ Erro ao gerar dados:\n`{str(e)}`", parse_mode="Markdown")
+        await update.message.reply_text(f"❌ Erro:\n`{str(e)}`", parse_mode="Markdown")
 
 # ── GERAR DASHBOARD ───────────────────────────────────────────────────────────
 async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
