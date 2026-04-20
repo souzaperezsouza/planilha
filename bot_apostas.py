@@ -278,20 +278,7 @@ async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if txt == "📊 Gerar Dashboard":
             return await gerar_dashboard(update, ctx)
         if txt == "📂 Gerar Dados":
-            ctx.user_data["aguardando_url_migracao"] = True
-            await update.message.reply_text(
-                "📂 *Migrar banco de dados*\n\n"
-                "Cole a *External URL* do novo banco do Render:\n\n"
-                "_(Render → novo banco → Connections → External Database URL)_",
-                reply_markup=teclado_cancelar(), parse_mode="Markdown"
-            )
-            return
-        if ctx.user_data.get("aguardando_url_migracao"):
-            if txt == CANCELAR_BTN:
-                ctx.user_data.clear()
-                await update.message.reply_text("❌ Cancelado.", reply_markup=teclado_menu())
-                return
-            return await executar_migracao(update, ctx, txt)
+            return await gerar_xlsx_dados(update, ctx)
         ctx.user_data.clear()
 
     if txt == "📝 Nova aposta":      return await nova_aposta_inicio(update, ctx)
@@ -876,13 +863,112 @@ async def mudar_unidade_receber(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def gerar_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data["modo"] = "gerar"
     await update.message.reply_text(
-        "📊 *Exportar / Migrar*\n\n"
-        "• *Gerar Resultados* → xlsx com todas as apostas (use para migrar o banco)\n"
-        "• *Gerar Dados* → migra os dados para um novo banco no Render",
+        "📊 *Exportar*\n\n"
+        "• *Gerar Dashboard* → xlsx com estatísticas e gráficos\n"
+        "• *Gerar Dados* → xlsx com dados brutos para migração de banco",
         reply_markup=teclado_gerar(), parse_mode="Markdown"
     )
 
-async def executar_migracao(update: Update, ctx: ContextTypes.DEFAULT_TYPE, nova_url: str):
+async def gerar_xlsx_dados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Gera xlsx com dados brutos (freebet + unidade) para uso no migrar_db.py."""
+    await update.message.reply_text("⏳ Gerando arquivo de dados, aguarde...")
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+
+        apostas = carregar()
+        apostas_ord = sorted(apostas, key=lambda a: (str(a["data"]), a.get("horario") or "99:99", int(a["id"])))
+        unidade_atual = get_unidade_atual()
+
+        DARK = "1E293B"; WHITE = "FFFFFF"; ALT = "EFF6FF"; BORDER_C = "CBD5E1"
+        def est(cell, bold=False, fc="FFFFFF", bg=None, size=10):
+            cell.font = Font(name="Arial", bold=bold, color=fc, size=size)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            if bg: cell.fill = PatternFill("solid", start_color=bg)
+        def brd():
+            s = Side(style="thin", color=BORDER_C)
+            return Border(left=s, right=s, top=s, bottom=s)
+
+        wb = openpyxl.Workbook()
+        ws = wb.active; ws.title = "Dados"
+
+        ws.merge_cells("A1:N1"); ws["A1"] = "DADOS PARA MIGRAÇÃO"
+        est(ws["A1"], bold=True, bg=DARK, size=13); ws.row_dimensions[1].height=36
+        ws.row_dimensions[2].height = 6
+
+        headers = ["#","Data","Hora","Descricao","Odd","Stake","Esporte","Casa","Resultado","Lucro","Freebet","Unidade","Cashout Valor","ID Seq"]
+        ws.row_dimensions[3].height = 22
+        for c, h in enumerate(headers, 1):
+            cell = ws.cell(row=3, column=c, value=h)
+            est(cell, bold=True, bg=DARK); cell.border = brd()
+
+        MAPA_RES = {"ganhou":"Ganhou","perdeu":"Perdeu","void":"Void","pendente":"Pendente"}
+        lucro_acum = 0
+        for i, a in enumerate(apostas_ord):
+            er = 4 + i; ws.row_dimensions[er].height = 18
+            rb = WHITE if i % 2 == 0 else ALT
+            res = a["resultado"]
+
+            lucro_a = ""
+            if res in ("ganhou","perdeu") or eh_cashout(a):
+                lucro_a = round(lucro_aposta(a), 2)
+                lucro_acum += lucro_a
+
+            res_d = MAPA_RES.get(res, res)
+            if eh_cashout(a): res_d = "Cashout"
+            data_fmt = a["data"].strftime("%d/%m/%Y") if hasattr(a["data"],"strftime") else str(a["data"])[:10]
+
+            vals = [
+                a["id"], data_fmt, a.get("horario",""), a["descricao"],
+                float(a["odd"]), float(a["stake"]), a.get("esporte",""), a.get("casa",""),
+                res_d, lucro_a,
+                float(a.get("freebet") or 0), float(a.get("unidade") or 50),
+                float(a.get("cashout_valor") or 0), a["id"]
+            ]
+            for c, val in enumerate(vals, 1):
+                cell = ws.cell(row=er, column=c, value=val)
+                cell.font = Font(name="Arial", size=10, color="000000")
+                cell.alignment = Alignment(horizontal="left" if c==4 else "center", vertical="center")
+                cell.fill = PatternFill("solid", start_color=rb); cell.border = brd()
+                if c in (5,6,10,11,12,13) and val != "": cell.number_format = "#,##0.00"
+
+        # Info de unidade atual na última linha
+        info_row = 4 + len(apostas_ord) + 1
+        ws.cell(row=info_row, column=1, value="unidade_atual").font = Font(name="Arial", bold=True, size=10)
+        ws.cell(row=info_row, column=2, value=unidade_atual).font = Font(name="Arial", bold=True, size=10)
+
+        widths = [8,12,10,32,10,10,14,14,12,10,10,10,12,8]
+        for i, w in enumerate(widths, 1): ws.column_dimensions[get_column_letter(i)].width = w
+
+        buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+        from datetime import datetime as dt2
+        nome_arq = f"dados_{dt2.now().strftime('%d%m%Y_%H%M')}.xlsx"
+
+        instrucoes = (
+            "📂 *Arquivo de dados gerado!*\n\n"
+            "*Como usar no próximo mês:*\n\n"
+            "1️⃣ Salve esse arquivo na pasta Downloads\n"
+            "2️⃣ Salve também o `migrar\\_db.py` na mesma pasta\n"
+            "3️⃣ No `migrar\\_db.py`, troque:\n"
+            "   • `XLSX\\_BASE` → nome desse arquivo\n"
+            "   • `NEW\\_URL` → External URL do banco novo\n"
+            "4️⃣ Render → suspenda o banco atual\n"
+            "5️⃣ Render → ative o banco novo\n"
+            "6️⃣ No CMD:\n"
+            "   `cd C:\\\\Users\\\\enzop\\\\Downloads`\n"
+            "   `python migrar\\_db.py`\n"
+            "7️⃣ Render → seu serviço → Environment → `DATABASE\\_URL`\n"
+            "   Troque pela Internal URL do banco novo → *Manual Deploy*"
+        )
+        await update.message.reply_document(
+            document=InputFile(buf, filename=nome_arq),
+            caption=instrucoes,
+            parse_mode="Markdown",
+            reply_markup=teclado_gerar()
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Erro ao gerar dados:\n`{str(e)}`", parse_mode="Markdown")
     if not nova_url.startswith("postgresql://"):
         await update.message.reply_text(
             "❌ URL inválida. Deve começar com `postgresql://`\nTente novamente:",
