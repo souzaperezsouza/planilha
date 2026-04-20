@@ -335,14 +335,49 @@ async def receber_data(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def receber_horario(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     raw = update.message.text.strip()
     if raw == CANCELAR_BTN: return await cancelar(update, ctx)
-    ctx.user_data["horario"] = datetime.now().strftime("%H:%M") if raw == "0" else raw
-    if raw != "0":
-        try: datetime.strptime(raw, "%H:%M")
-        except ValueError:
-            await update.message.reply_text("❌ Use HH:MM ou 0 para agora:")
+    if raw == "0":
+        ctx.user_data["horario"] = datetime.now().strftime("%H:%M")
+    else:
+        horario = normalizar_horario(raw)
+        if not horario:
+            await update.message.reply_text("❌ Horário inválido. Exemplos: 15, 15:3, 15:30, 1530:")
             return HORARIO
+        ctx.user_data["horario"] = horario
     await update.message.reply_text("🏷 *Descrição:*", reply_markup=teclado_cancelar(), parse_mode="Markdown")
     return DESCRICAO
+
+def normalizar_horario(raw: str):
+    """Converte entrada flexível de horário para HH:MM.
+    Aceita: 15 → 15:00 | 15:3 → 15:30 | 153 → 15:30 | 1530 → 15:30 | 15:30 → 15:30
+    """
+    import re
+    raw = raw.strip().replace(".", ":").replace(",", ":")
+    # Formato HH:MM ou H:MM
+    m = re.fullmatch(r"(\d{1,2}):(\d{1,2})", raw)
+    if m:
+        h, mi = int(m.group(1)), int(m.group(2))
+        # 15:3 → 15:30
+        if m.group(2) and len(m.group(2)) == 1:
+            mi = int(m.group(2)) * 10
+        if 0 <= h <= 23 and 0 <= mi <= 59:
+            return f"{h:02d}:{mi:02d}"
+        return None
+    # Só hora: 15 → 15:00
+    m = re.fullmatch(r"(\d{1,2})", raw)
+    if m:
+        h = int(m.group(1))
+        if 0 <= h <= 23:
+            return f"{h:02d}:00"
+        return None
+    # Formato compacto: 1530 → 15:30, 153 → 15:30, 900 → 09:00
+    m = re.fullmatch(r"(\d{3,4})", raw)
+    if m:
+        s = m.group(1).zfill(4)
+        h, mi = int(s[:2]), int(s[2:])
+        if 0 <= h <= 23 and 0 <= mi <= 59:
+            return f"{h:02d}:{mi:02d}"
+        return None
+    return None
 
 async def receber_descricao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.message.text.strip() == CANCELAR_BTN: return await cancelar(update, ctx)
@@ -695,7 +730,7 @@ async def editar_receber_campo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "Se perdeu tudo -> digite *0*",
             reply_markup=teclado_cancelar(), parse_mode="Markdown")
         return EDITAR_VALOR
-    dicas = {"data":"Nova data (DD/MM/AAAA) ou 0 para hoje:","horario":"Novo horário (HH:MM) ou 0 para agora:",
+    dicas = {"data":"Nova data (DD/MM/AAAA) ou 0 para hoje:","horario":"Novo horário (ex: 15, 15:3, 15:30) ou 0 para agora:",
              "descricao":"Nova descrição:","odd":"Nova odd:","stake":"Novo stake (R$):"}
     await update.message.reply_text(dicas[campo], reply_markup=teclado_cancelar())
     return EDITAR_VALOR
@@ -723,7 +758,13 @@ async def editar_receber_valor(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("❌ Data inválida:")
                 return EDITAR_VALOR
     elif campo == "horario":
-        novo_valor = datetime.now().strftime("%H:%M") if raw == "0" else raw
+        if raw == "0":
+            novo_valor = datetime.now().strftime("%H:%M")
+        else:
+            novo_valor = normalizar_horario(raw)
+            if not novo_valor:
+                await update.message.reply_text("❌ Horário inválido. Exemplos: 15, 15:3, 15:30, 1530:")
+                return EDITAR_VALOR
     elif campo in ("odd","stake","cashout","freebet"):
         try: novo_valor = float(raw.replace(",","."))
         except ValueError:
