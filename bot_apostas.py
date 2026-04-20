@@ -943,128 +943,143 @@ async def gerar_xlsx_dados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         buf = io.BytesIO(); wb.save(buf); buf.seek(0)
         from datetime import datetime as dt2
-        nome_arq = f"dados_{dt2.now().strftime('%d%m%Y_%H%M')}.xlsx"
+        import zipfile
+        nome_xlsx = f"dados_{dt2.now().strftime('%d%m%Y_%H%M')}.xlsx"
+
+        # Gera o migrar_db.py com o nome do xlsx já preenchido
+        script = f'''"""
+Migração de banco de dados — Bot Apostas
+Coloque esse arquivo e o {nome_xlsx} na mesma pasta e rode:
+  python migrar_db.py
+"""
+import os, psycopg2, pandas as pd
+from datetime import datetime
+
+XLSX_FILE = "{nome_xlsx}"
+NEW_URL   = "COLE_AQUI_A_EXTERNAL_URL_DO_BANCO_NOVO"  # <-- troque isso
+
+MAPA_RESULTADO = {{"ganhou":"ganhou","perdeu":"perdeu","pendente":"pendente","void":"void","cashout":"void"}}
+
+def parse_data(val):
+    if not val or str(val).strip() in ("", "nan"): return None
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+        try: return datetime.strptime(str(val).strip(), fmt).strftime("%Y-%m-%d")
+        except: pass
+    return None
+
+def sf(val, d=0.0):
+    try:
+        f = float(val); return d if f != f else f
+    except: return d
+
+def limpar(val):
+    s = str(val).strip(); return None if s in ("nan","None","") else s
+
+if __name__ == "__main__":
+    if NEW_URL == "COLE_AQUI_A_EXTERNAL_URL_DO_BANCO_NOVO":
+        print("❌ Troque NEW_URL pela External URL do novo banco antes de rodar.")
+        exit(1)
+    if not os.path.exists(XLSX_FILE):
+        print(f"❌ Arquivo {{XLSX_FILE}} nao encontrado.")
+        exit(1)
+
+    print(f"Lendo {{XLSX_FILE}}...")
+    df = pd.read_excel(XLSX_FILE, sheet_name="Dados", header=2)
+    df.columns = ["id","data","horario","descricao","odd","stake","esporte","casa","resultado",
+                  "lucro","freebet","unidade","cashout_valor","id_seq"]
+    df = df[pd.to_numeric(df["id"], errors="coerce").notna()].copy()
+    df["id"] = df["id"].astype(int)
+
+    # Lê unidade_atual da linha extra no final
+    df_raw = pd.read_excel(XLSX_FILE, sheet_name="Dados", header=None)
+    unidade_atual = "60"
+    for _, row in df_raw.iterrows():
+        if str(row.iloc[0]).strip() == "unidade_atual":
+            unidade_atual = str(row.iloc[1]).strip().rstrip(".0") or "60"
+            break
+
+    apostas = []
+    for _, row in df.iterrows():
+        rr = str(row["resultado"]).strip().lower()
+        resultado_db = MAPA_RESULTADO.get(rr, "pendente")
+        stake = sf(row["stake"]); lucro = sf(row["lucro"])
+        cashout_valor = sf(row["cashout_valor"])
+        if rr == "cashout" and cashout_valor == 0:
+            cashout_valor = stake + lucro
+        apostas.append({{
+            "id": row["id"], "data": parse_data(row["data"]),
+            "horario": limpar(row["horario"]), "descricao": str(row["descricao"]).strip(),
+            "odd": sf(row["odd"]), "stake": stake, "resultado": resultado_db,
+            "casa": limpar(row["casa"]), "esporte": limpar(row["esporte"]),
+            "freebet": sf(row["freebet"]), "unidade": sf(row["unidade"]) or 60.0,
+            "cashout_valor": cashout_valor,
+        }})
+    print(f"   {{len(apostas)}} apostas lidas.")
+
+    print("Conectando ao banco novo...")
+    conn = psycopg2.connect(NEW_URL)
+    cur  = conn.cursor()
+    cur.execute("""CREATE TABLE IF NOT EXISTS apostas (
+        id SERIAL PRIMARY KEY, data DATE NOT NULL, horario VARCHAR(5),
+        descricao TEXT NOT NULL, odd NUMERIC(8,3) NOT NULL, stake NUMERIC(10,2) NOT NULL,
+        resultado VARCHAR(10) DEFAULT \'pendente\', casa VARCHAR(50), esporte VARCHAR(50),
+        freebet NUMERIC(10,2) DEFAULT 0, unidade NUMERIC(10,2) DEFAULT 50,
+        cashout_valor NUMERIC(10,2) DEFAULT 0)""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS configuracoes (
+        chave VARCHAR(50) PRIMARY KEY, valor TEXT NOT NULL)""")
+    cur.execute("DELETE FROM apostas")
+    cur.execute("DELETE FROM configuracoes")
+    cur.execute("INSERT INTO configuracoes (chave,valor) VALUES (\'unidade_atual\',%s)", (unidade_atual,))
+
+    inseridas = 0
+    for a in apostas:
+        if not a["data"]: continue
+        cur.execute("""INSERT INTO apostas
+            (id,data,horario,descricao,odd,stake,resultado,casa,esporte,freebet,unidade,cashout_valor)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (a["id"],a["data"],a["horario"],a["descricao"],a["odd"],a["stake"],a["resultado"],
+             a["casa"],a["esporte"],a["freebet"],a["unidade"],a["cashout_valor"]))
+        inseridas += 1
+
+    if apostas:
+        max_id = max(a["id"] for a in apostas)
+        cur.execute(f"SELECT setval(\'apostas_id_seq\', {{max_id}})")
+
+    conn.commit(); conn.close()
+    print(f"\\n✅ {{inseridas}} apostas inseridas | unidade_atual: R$ {{unidade_atual}}")
+    print("\\n>> PROXIMO PASSO:")
+    print("   Render -> seu servico -> Environment -> DATABASE_URL")
+    print("   Troque pela Internal URL do banco novo + Save Changes + Manual Deploy")
+'''
+
+        # Empacota xlsx + script num zip
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(nome_xlsx, buf.getvalue())
+            zf.writestr("migrar_db.py", script)
+        zip_buf.seek(0)
 
         instrucoes = (
-            "📂 *Arquivo de dados gerado!*\n\n"
+            "📂 *Arquivo de migração gerado!*\n\n"
             "*Como usar no próximo mês:*\n\n"
-            "1️⃣ Salve esse arquivo na pasta Downloads\n"
-            "2️⃣ Salve também o `migrar\\_db.py` na mesma pasta\n"
-            "3️⃣ No `migrar\\_db.py`, troque:\n"
-            "   • `XLSX\\_BASE` → nome desse arquivo\n"
-            "   • `NEW\\_URL` → External URL do banco novo\n"
-            "4️⃣ Render → suspenda o banco atual\n"
-            "5️⃣ Render → ative o banco novo\n"
-            "6️⃣ No CMD:\n"
+            "1️⃣ Extraia o zip na pasta Downloads\n"
+            "2️⃣ No `migrar\\_db.py`, troque `NEW\\_URL` pela External URL do banco novo\n"
+            "3️⃣ Render → suspenda o banco atual → ative o banco novo\n"
+            "4️⃣ No CMD:\n"
             "   `cd C:\\\\Users\\\\enzop\\\\Downloads`\n"
             "   `python migrar\\_db.py`\n"
-            "7️⃣ Render → seu serviço → Environment → `DATABASE\\_URL`\n"
-            "   Troque pela Internal URL do banco novo → *Manual Deploy*"
+            "5️⃣ Render → seu serviço → Environment → `DATABASE\\_URL`\n"
+            "   Troque pela *Internal URL* do banco novo → *Manual Deploy*"
         )
+        nome_zip = f"migracao_{dt2.now().strftime('%d%m%Y_%H%M')}.zip"
         await update.message.reply_document(
-            document=InputFile(buf, filename=nome_arq),
+            document=InputFile(zip_buf, filename=nome_zip),
             caption=instrucoes,
             parse_mode="Markdown",
             reply_markup=teclado_gerar()
         )
     except Exception as e:
         await update.message.reply_text(f"❌ Erro ao gerar dados:\n`{str(e)}`", parse_mode="Markdown")
-    if not nova_url.startswith("postgresql://"):
-        await update.message.reply_text(
-            "❌ URL inválida. Deve começar com `postgresql://`\nTente novamente:",
-            parse_mode="Markdown"
-        )
-        return
-
-    await update.message.reply_text("⏳ Migrando banco de dados, aguarde...")
-    try:
-        # Lê todas as apostas do banco atual (incluindo freebet e unidade)
-        conn_orig = psycopg2.connect(DATABASE_URL)
-        cur_orig  = conn_orig.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur_orig.execute("SELECT * FROM apostas ORDER BY id ASC")
-        apostas_orig = [dict(r) for r in cur_orig.fetchall()]
-        cur_orig.execute("SELECT * FROM configuracoes")
-        configs_orig = [dict(r) for r in cur_orig.fetchall()]
-        cur_orig.execute("SELECT valor FROM configuracoes WHERE chave='unidade_atual'")
-        row_unidade = cur_orig.fetchone()
-        unidade_migrar = row_unidade["valor"] if row_unidade else "50"
-        conn_orig.close()
-
-        conn_novo = psycopg2.connect(nova_url)
-        cur_novo  = conn_novo.cursor()
-        cur_novo.execute("""
-            CREATE TABLE IF NOT EXISTS apostas (
-                id            SERIAL PRIMARY KEY,
-                data          DATE NOT NULL,
-                horario       VARCHAR(5),
-                descricao     TEXT NOT NULL,
-                odd           NUMERIC(8,3) NOT NULL,
-                stake         NUMERIC(10,2) NOT NULL,
-                resultado     VARCHAR(10) DEFAULT 'pendente',
-                casa          VARCHAR(50),
-                esporte       VARCHAR(50),
-                freebet       NUMERIC(10,2) DEFAULT 0,
-                unidade       NUMERIC(10,2) DEFAULT 50,
-                cashout_valor NUMERIC(10,2) DEFAULT 0
-            )
-        """)
-        cur_novo.execute("""
-            CREATE TABLE IF NOT EXISTS configuracoes (
-                chave VARCHAR(50) PRIMARY KEY,
-                valor TEXT NOT NULL
-            )
-        """)
-        cur_novo.execute("DELETE FROM apostas")
-        cur_novo.execute("DELETE FROM configuracoes")
-
-        migradas = 0
-        for a in apostas_orig:
-            cur_novo.execute("""
-                INSERT INTO apostas
-                    (id,data,horario,descricao,odd,stake,resultado,
-                     casa,esporte,freebet,unidade,cashout_valor)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """, (a["id"], a["data"], a.get("horario"), a["descricao"],
-                  a["odd"], a["stake"], a["resultado"], a.get("casa"), a.get("esporte"),
-                  float(a.get("freebet") or 0), float(a.get("unidade") or 50),
-                  float(a.get("cashout_valor") or 0)))
-            migradas += 1
-
-        for c in configs_orig:
-            cur_novo.execute("""
-                INSERT INTO configuracoes (chave, valor) VALUES (%s,%s)
-                ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor
-            """, (c["chave"], c["valor"]))
-
-        # Garante que a unidade_atual foi migrada corretamente
-        cur_novo.execute("""
-            INSERT INTO configuracoes (chave, valor) VALUES ('unidade_atual', %s)
-            ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor
-        """, (unidade_migrar,))
-
-        if apostas_orig:
-            max_id = max(a["id"] for a in apostas_orig)
-            cur_novo.execute(f"SELECT setval('apostas_id_seq', {max_id})")
-
-        conn_novo.commit()
-        conn_novo.close()
-        ctx.user_data.clear()
-
-        await update.message.reply_text(
-            f"✅ *Migração concluída!*\n\n"
-            f"📊 {migradas} apostas migradas (com freebet e unidade)\n"
-            f"⚙️ Configurações migradas | Unidade atual: *R$ {float(unidade_migrar):.0f}*\n\n"
-            f"⚠️ *Próximo passo:*\n"
-            f"Render → seu serviço → *Environment* → `DATABASE_URL`\n"
-            f"Troque pela URL do novo banco e faça *Manual Deploy*.",
-            reply_markup=teclado_menu(), parse_mode="Markdown"
-        )
-    except Exception as e:
-        ctx.user_data.clear()
-        await update.message.reply_text(
-            f"❌ Erro na migração:\n`{str(e)}`",
-            reply_markup=teclado_menu(), parse_mode="Markdown"
-        )
 
 # ── GERAR DASHBOARD ───────────────────────────────────────────────────────────
 async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
