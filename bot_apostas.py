@@ -292,7 +292,7 @@ async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def nova_aposta_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     hoje = datetime.now().strftime("%d/%m/%Y")
     await update.message.reply_text(
-        f"📅 *Data do jogo*\nHoje é *{hoje}* — mande *0* para confirmar ou digite outra:\n_Ex: 20, 20/05, 20/05/2026_",
+        f"📅 *Data do jogo*\nHoje é *{hoje}* — mande *0* para confirmar ou digite outra:",
         reply_markup=teclado_cancelar(), parse_mode="Markdown"
     )
     return DATA
@@ -305,7 +305,7 @@ async def receber_data(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     else:
         data = normalizar_data(raw)
         if not data:
-            await update.message.reply_text("❌ Data inválida. Exemplos: 20, 20/05, 20/05/2026 ou 0 para hoje:")
+            await update.message.reply_text("❌ Data inválida:")
             return DATA
         ctx.user_data["data"] = data
     agora = datetime.now().strftime("%H:%M")
@@ -353,7 +353,7 @@ async def receber_horario(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     else:
         horario = normalizar_horario(raw)
         if not horario:
-            await update.message.reply_text("❌ Horário inválido. Exemplos: 15, 15:3, 15:30, 1530:")
+            await update.message.reply_text("❌ Horário inválido:")
             return HORARIO
         ctx.user_data["horario"] = horario
     await update.message.reply_text("🏷 *Descrição:*", reply_markup=teclado_cancelar(), parse_mode="Markdown")
@@ -743,7 +743,7 @@ async def editar_receber_campo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "Se perdeu tudo -> digite *0*",
             reply_markup=teclado_cancelar(), parse_mode="Markdown")
         return EDITAR_VALOR
-    dicas = {"data":"Nova data (ex: 20, 20/05, 20/05/2026) ou 0 para hoje:","horario":"Novo horário (ex: 15, 15:3, 15:30) ou 0 para agora:",
+    dicas = {"data":"Nova data ou 0 para hoje:","horario":"Novo horário ou 0 para agora:",
              "descricao":"Nova descrição:","odd":"Nova odd:","stake":"Novo stake (R$):"}
     await update.message.reply_text(dicas[campo], reply_markup=teclado_cancelar())
     return EDITAR_VALOR
@@ -766,7 +766,7 @@ async def editar_receber_valor(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         else:
             novo_valor = normalizar_data(raw)
             if not novo_valor:
-                await update.message.reply_text("❌ Data inválida. Exemplos: 20, 20/05, 20/05/2026:")
+                await update.message.reply_text("❌ Data inválida:")
                 return EDITAR_VALOR
     elif campo == "horario":
         if raw == "0":
@@ -774,7 +774,7 @@ async def editar_receber_valor(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         else:
             novo_valor = normalizar_horario(raw)
             if not novo_valor:
-                await update.message.reply_text("❌ Horário inválido. Exemplos: 15, 15:3, 15:30, 1530:")
+                await update.message.reply_text("❌ Horário inválido:")
                 return EDITAR_VALOR
     elif campo in ("odd","stake","cashout","freebet"):
         try: novo_valor = float(raw.replace(",","."))
