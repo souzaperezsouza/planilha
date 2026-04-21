@@ -292,7 +292,7 @@ async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def nova_aposta_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     hoje = datetime.now().strftime("%d/%m/%Y")
     await update.message.reply_text(
-        f"📅 *Data do jogo*\nHoje é *{hoje}* — mande *0* para confirmar ou digite outra (DD/MM/AAAA):",
+        f"📅 *Data do jogo*\nHoje é *{hoje}* — mande *0* para confirmar ou digite outra:\n_Ex: 20, 20/05, 20/05/2026_",
         reply_markup=teclado_cancelar(), parse_mode="Markdown"
     )
     return DATA
@@ -303,21 +303,47 @@ async def receber_data(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if raw == "0":
         ctx.user_data["data"] = datetime.now().strftime("%Y-%m-%d")
     else:
-        ok = False
-        for fmt in ("%d/%m/%Y", "%d/%m/%y"):
-            try:
-                ctx.user_data["data"] = datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
-                ok = True; break
-            except ValueError: pass
-        if not ok:
-            await update.message.reply_text("❌ Data inválida. Use DD/MM/AAAA ou 0 para hoje:")
+        data = normalizar_data(raw)
+        if not data:
+            await update.message.reply_text("❌ Data inválida. Exemplos: 20, 20/05, 20/05/2026 ou 0 para hoje:")
             return DATA
+        ctx.user_data["data"] = data
     agora = datetime.now().strftime("%H:%M")
     await update.message.reply_text(
         f"⏰ *Horário do jogo*\nAgora são *{agora}* — mande *0* para usar ou digite outro (HH:MM):",
         reply_markup=teclado_cancelar(), parse_mode="Markdown"
     )
     return HORARIO
+
+def normalizar_data(raw: str):
+    """Converte entrada flexível de data para YYYY-MM-DD.
+    Aceita: 20 → dia 20 do mês atual | 20/05 → 20/05 do ano atual | 20/05/2026 ou 20/05/26
+    """
+    agora = datetime.now()
+    raw = raw.strip()
+    # Só dia: 20 → dia 20 do mês e ano atuais
+    try:
+        dia = int(raw)
+        if 1 <= dia <= 31:
+            try:
+                return datetime(agora.year, agora.month, dia).strftime("%Y-%m-%d")
+            except ValueError:
+                return None
+    except ValueError:
+        pass
+    # DD/MM → ano atual
+    try:
+        d = datetime.strptime(raw, "%d/%m")
+        return datetime(agora.year, d.month, d.day).strftime("%Y-%m-%d")
+    except ValueError:
+        pass
+    # DD/MM/AAAA ou DD/MM/AA
+    for fmt in ("%d/%m/%Y", "%d/%m/%y"):
+        try:
+            return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    return None
 
 async def receber_horario(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     raw = update.message.text.strip()
@@ -717,7 +743,7 @@ async def editar_receber_campo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "Se perdeu tudo -> digite *0*",
             reply_markup=teclado_cancelar(), parse_mode="Markdown")
         return EDITAR_VALOR
-    dicas = {"data":"Nova data (DD/MM/AAAA) ou 0 para hoje:","horario":"Novo horário (ex: 15, 15:3, 15:30) ou 0 para agora:",
+    dicas = {"data":"Nova data (ex: 20, 20/05, 20/05/2026) ou 0 para hoje:","horario":"Novo horário (ex: 15, 15:3, 15:30) ou 0 para agora:",
              "descricao":"Nova descrição:","odd":"Nova odd:","stake":"Novo stake (R$):"}
     await update.message.reply_text(dicas[campo], reply_markup=teclado_cancelar())
     return EDITAR_VALOR
@@ -738,11 +764,9 @@ async def editar_receber_valor(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if campo == "data":
         if raw == "0": novo_valor = datetime.now().strftime("%Y-%m-%d")
         else:
-            for fmt in ("%d/%m/%Y","%d/%m/%y"):
-                try: novo_valor = datetime.strptime(raw, fmt).strftime("%Y-%m-%d"); break
-                except ValueError: pass
+            novo_valor = normalizar_data(raw)
             if not novo_valor:
-                await update.message.reply_text("❌ Data inválida:")
+                await update.message.reply_text("❌ Data inválida. Exemplos: 20, 20/05, 20/05/2026:")
                 return EDITAR_VALOR
     elif campo == "horario":
         if raw == "0":
