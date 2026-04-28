@@ -530,7 +530,8 @@ async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     pendentes_ap = [a for a in apostas if a["resultado"] == "pendente"]
     stake_curso  = sum(float(a["stake"]) for a in pendentes_ap)
     unidade_atual = get_unidade_atual()
-    lucro_unidades = lucro_total / unidade_atual if unidade_atual else 0
+    # Lucro em unidades: usa a unidade registrada em cada aposta
+    lucro_unidades = sum(lucro_aposta(a) / float(a.get("unidade") or 50) for a in res)
 
     agora = datetime.now()
     hoje_date = agora.date()
@@ -540,8 +541,8 @@ async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                (a["data"] if isinstance(a["data"], type(hoje_date)) else
                 datetime.strptime(str(a["data"])[:10], "%Y-%m-%d").date()
                ).replace(day=1) == hoje_date.replace(day=1)]
-    lucro_mes = sum(lucro_aposta(a) for a in res_mes)
-    lucro_mes_u = lucro_mes / unidade_atual if unidade_atual else 0
+    lucro_mes   = sum(lucro_aposta(a) for a in res_mes)
+    lucro_mes_u = sum(lucro_aposta(a) / float(a.get("unidade") or 50) for a in res_mes)
     sinal_m = "+" if lucro_mes >= 0 else ""
     emoji_m = "🟢" if lucro_mes >= 0 else "🔴"
 
@@ -553,7 +554,7 @@ async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                    datetime.strptime(str(a["data"])[:10], "%Y-%m-%d").date()
                   ) >= inicio_semana_date]
     lucro_semana   = sum(lucro_aposta(a) for a in res_semana)
-    lucro_semana_u = lucro_semana / unidade_atual if unidade_atual else 0
+    lucro_semana_u = sum(lucro_aposta(a) / float(a.get("unidade") or 50) for a in res_semana)
     sinal_s = "+" if lucro_semana >= 0 else ""
     emoji_s = "🟢" if lucro_semana >= 0 else "🔴"
 
@@ -734,30 +735,38 @@ async def resultados_dia(update: Update, ctx: ContextTypes.DEFAULT_TYPE, raw: st
 
     data_str = data_obj.strftime("%Y-%m-%d")
     apostas  = carregar()
-    do_dia   = [a for a in apostas if str(a["data"])[:10] == data_str and (a["resultado"] in ("ganhou","perdeu") or eh_cashout(a))]
+    do_dia   = [a for a in apostas if str(a["data"])[:10] == data_str
+                and a["resultado"] in ("ganhou","perdeu","void")]
     if not do_dia:
         await update.message.reply_text(
             f"Nenhuma aposta resolvida em {data_obj.strftime('%d/%m/%Y')}.",
             reply_markup=teclado_resultados())
         return True
-    lucro_dia = sum(lucro_aposta(a) for a in do_dia)
+    lucro_dia   = sum(lucro_aposta(a) for a in do_dia)
+    lucro_dia_u = sum(lucro_aposta(a) / float(a.get("unidade") or 50) for a in do_dia)
     g  = sum(1 for a in do_dia if a["resultado"] == "ganhou")
     p  = sum(1 for a in do_dia if a["resultado"] == "perdeu")
     co = sum(1 for a in do_dia if eh_cashout(a))
+    vo = sum(1 for a in do_dia if a["resultado"] == "void" and not eh_cashout(a))
     emoji = "🟢" if lucro_dia >= 0 else "🔴"
     sinal = "+" if lucro_dia >= 0 else ""
     resumo_str = f"{g}V {p}D"
     if co: resumo_str += f" {co}CO"
-    linhas = [f"{emoji} *{data_obj.strftime('%d/%m/%Y')}* — {resumo_str} — {sinal}R$ {lucro_dia:.2f}\n"]
+    if vo: resumo_str += f" {vo}Void"
+    linhas = [f"{emoji} *{data_obj.strftime('%d/%m/%Y')}* — {resumo_str} — {sinal}R$ {lucro_dia:.2f} ({lucro_dia_u:+.2f}u)\n"]
     emojis_res = {"ganhou":"✅","perdeu":"❌"}
     for a in do_dia:
-        l = lucro_aposta(a)
-        s = "+" if l >= 0 else ""
+        l   = lucro_aposta(a)
+        u_a = float(a.get("unidade") or 50)
+        l_u = l / u_a
+        s   = "+" if l >= 0 else ""
         if eh_cashout(a):
             cv = float(a.get("cashout_valor") or 0)
-            linhas.append(f"💸 *#{a['id']}* odd {float(a['odd']):g} | R${float(a['stake']):.0f} → CO R${cv:.0f} ({s}R$ {l:.2f})\n_{a['descricao']}_\n")
+            linhas.append(f"💸 *#{a['id']}* odd {float(a['odd']):g} | R${float(a['stake']):.0f} → CO R${cv:.0f} ({s}R$ {l:.2f} / {l_u:+.2f}u)\n_{a['descricao']}_\n")
+        elif a["resultado"] == "void":
+            linhas.append(f"↩️ *#{a['id']}* odd {float(a['odd']):g} | R${float(a['stake']):.0f} → Void (R$ 0.00 / 0.00u)\n_{a['descricao']}_\n")
         else:
-            linhas.append(f"{emojis_res.get(a['resultado'],'')} *#{a['id']}* odd {float(a['odd']):g} | R${float(a['stake']):.0f} → {s}R$ {l:.2f}\n_{a['descricao']}_\n")
+            linhas.append(f"{emojis_res.get(a['resultado'],'')} *#{a['id']}* odd {float(a['odd']):g} | R${float(a['stake']):.0f} → {s}R$ {l:.2f} ({l_u:+.2f}u)\n_{a['descricao']}_\n")
     linhas.append("Digite outra data, 🏦 *Por Casa* ou 🔙 *Voltar*:")
     await update.message.reply_text("\n".join(linhas), reply_markup=teclado_resultados(), parse_mode="Markdown")
     return True
@@ -1239,7 +1248,7 @@ async def _gerar_dashboard_interno(update: Update, ctx: ContextTypes.DEFAULT_TYP
     ws.row_dimensions[2].height = 8
 
     unidade_dash = get_unidade_atual()
-    lucro_units_dash = lucro_total / unidade_dash if unidade_dash else 0
+    lucro_units_dash = sum(lucro_aposta(a) / float(a.get("unidade") or 50) for a in df_res)
     stake_curso = sum(float(a["stake"]) for a in apostas if a["resultado"]=="pendente")
     cards = [
         ("Total",         str(total),                    DARK),
