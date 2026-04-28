@@ -16,7 +16,8 @@ TOKEN         = "8790751046:AAG-AsvU3V-K5j4U8IOUQrpT6NXX8K3FcjU"
 DATABASE_URL  = os.environ.get("DATABASE_URL", "postgresql://apostas_db_br3e_user:9Q8kF2084mtEmOESc09jc22ZR7nS5FLz@dpg-d6ub6lfafjfc7380et2g-a/apostas_db_br3e")
 BANCA_INICIAL = 5000
 
-CASAS = ["Bet365","Betano","SportingBet","Novibet","Vaidebet","Betfast","BETesporte",
+CASAS = ["Bet365","Betano","sportingbet/betboo","vaidebet/betpix365","Betfast","BETesporte",
+    "goldebet/lotogreen",
          "Betnacional","BetFair","Stake","Lottu","Esportes Da Sorte","Esportivabet","Outra"]
 
 ESPORTES = ["⚽ Futebol","🏀 Basquete","🎾 Tênis","🏒 Hóquei",
