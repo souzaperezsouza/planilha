@@ -762,11 +762,11 @@ async def resultados_dia(update: Update, ctx: ContextTypes.DEFAULT_TYPE, raw: st
         s   = "+" if l >= 0 else ""
         if eh_cashout(a):
             cv = float(a.get("cashout_valor") or 0)
-            linhas.append(f"💸 *#{a['id']}* odd {float(a['odd']):g} | R${float(a['stake']):.0f} → CO R${cv:.0f} ({s}R$ {l:.2f} / {l_u:+.2f}u)\n_{a['descricao']}_\n")
+            linhas.append(f"💸 *#{a['id']}* odd {float(a['odd']):g} | R${float(a['stake']):.2f} → CO R${cv:.2f} ({s}R$ {l:.2f} / {l_u:+.2f}u)\n_{a['descricao']}_\n")
         elif a["resultado"] == "void":
-            linhas.append(f"↩️ *#{a['id']}* odd {float(a['odd']):g} | R${float(a['stake']):.0f} → Void (R$ 0.00 / 0.00u)\n_{a['descricao']}_\n")
+            linhas.append(f"↩️ *#{a['id']}* odd {float(a['odd']):g} | R${float(a['stake']):.2f} → Void (R$ 0.00 / 0.00u)\n_{a['descricao']}_\n")
         else:
-            linhas.append(f"{emojis_res.get(a['resultado'],'')} *#{a['id']}* odd {float(a['odd']):g} | R${float(a['stake']):.0f} → {s}R$ {l:.2f} ({l_u:+.2f}u)\n_{a['descricao']}_\n")
+            linhas.append(f"{emojis_res.get(a['resultado'],'')} *#{a['id']}* odd {float(a['odd']):g} | R${float(a['stake']):.2f} → {s}R$ {l:.2f} ({l_u:+.2f}u)\n_{a['descricao']}_\n")
     linhas.append("Digite outra data, 🏦 *Por Casa* ou 🔙 *Voltar*:")
     await update.message.reply_text("\n".join(linhas), reply_markup=teclado_resultados(), parse_mode="Markdown")
     return True
@@ -848,9 +848,10 @@ async def editar_receber_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data["editar_id"] = id_alvo
     data_fmt = aposta["data"].strftime("%d/%m/%Y") if hasattr(aposta["data"],"strftime") else str(aposta["data"])[:10]
     hora = f" {aposta.get('horario','')}" if aposta.get("horario") else ""
+    _label_res = {"ganhou":"Green ✅","perdeu":"Red ❌","void":"Void ↩️","pendente":"Pendente ⏳"}
     info = (f"✏️ *Aposta #{id_alvo}*\n\n📅 {data_fmt}{hora}\n🏷 {aposta['descricao']}\n"
             f"🔢 Odd: {aposta['odd']}\n💰 Stake: R$ {float(aposta['stake']):.2f}\n"
-            f"🏦 Casa: {aposta.get('casa','')}\n📊 Resultado: {aposta['resultado']}\n🎁 Freebet: R$ {float(aposta['freebet'] or 0):.2f}\n\n*Qual campo editar?*")
+            f"🏦 Casa: {aposta.get('casa','')}\n📊 Resultado: {_label_res.get(aposta['resultado'], aposta['resultado'])}\n🎁 Freebet: R$ {float(aposta['freebet'] or 0):.2f}\n\n*Qual campo editar?*")
     teclado = [[CAMPOS_LABEL[c]] for c in CAMPOS_EDITAVEIS] + [[CANCELAR_BTN]]
     await update.message.reply_text(info,
         reply_markup=ReplyKeyboardMarkup(teclado, resize_keyboard=True, one_time_keyboard=True),
@@ -878,7 +879,7 @@ async def editar_receber_campo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown")
         return EDITAR_CASA
     if campo == "resultado":
-        teclado = [["✅ Ganhou","❌ Perdeu"],["↩️ Void","⏳ Pendente"],[CANCELAR_BTN]]
+        teclado = [["✅ Green","❌ Red"],["↩️ Void","⏳ Pendente"],[CANCELAR_BTN]]
         await update.message.reply_text("📊 *Qual o resultado?*",
             reply_markup=ReplyKeyboardMarkup(teclado, resize_keyboard=True, one_time_keyboard=True),
             parse_mode="Markdown")
@@ -983,7 +984,7 @@ async def editar_receber_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     campo   = ctx.user_data["editar_campo"]
     id_alvo = ctx.user_data["editar_id"]
     if campo == "resultado":
-        mapa = {"✅ Ganhou":"ganhou","❌ Perdeu":"perdeu","↩️ Void":"void","⏳ Pendente":"pendente"}
+        mapa = {"✅ Green":"ganhou","❌ Red":"perdeu","✅ Ganhou":"ganhou","❌ Perdeu":"perdeu","↩️ Void":"void","⏳ Pendente":"pendente"}
         valor = mapa.get(raw, raw)
         return await aplicar_edicao(update, ctx, id_alvo, "resultado", valor)
 
@@ -1010,6 +1011,7 @@ async def aplicar_edicao(update, ctx, id_alvo, campo, novo_valor):
         if novo_valor == "perdeu": emoji_conf = "❌"
         elif novo_valor == "void": emoji_conf = "↩️"
         elif novo_valor == "pendente": emoji_conf = "⏳"
+        exibe = {"ganhou":"Green ✅","perdeu":"Red ❌","void":"Void ↩️","pendente":"Pendente ⏳"}.get(novo_valor, novo_valor)
     await update.message.reply_text(f"{emoji_conf} *Aposta #{id_alvo} atualizada!*\n{label} → *{exibe}*", parse_mode="Markdown")
     return await voltar_menu(update, ctx)
 
@@ -1284,7 +1286,7 @@ async def _gerar_dashboard_interno(update: Update, ctx: ContextTypes.DEFAULT_TYP
         if res in ("ganhou","perdeu") or eh_cashout(a):
             lucro_a=lucro_aposta(a)
             acum2+=lucro_a; banca_a=round(acum2,2); prog_a=round(acum2/BANCA,4)
-        res_d={"ganhou":"Ganhou","perdeu":"Perdeu","void":"Void","pendente":"Pendente"}.get(res,res)
+        res_d={"ganhou":"Green","perdeu":"Red","void":"Void","pendente":"Pendente"}.get(res,res)
         if eh_cashout(a): res_d="Cashout"
         data_fmt=a["data"].strftime("%d/%m/%Y") if hasattr(a["data"],"strftime") else str(a["data"])[:10]
         vals=[a["id"],data_fmt,a.get("horario",""),a["descricao"],a["odd"],a["stake"],
