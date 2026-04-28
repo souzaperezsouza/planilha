@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import logging
 import threading
 import psycopg2
@@ -16,8 +17,26 @@ TOKEN         = "8790751046:AAG-AsvU3V-K5j4U8IOUQrpT6NXX8K3FcjU"
 DATABASE_URL  = os.environ.get("DATABASE_URL", "postgresql://apostas_db_br3e_user:9Q8kF2084mtEmOESc09jc22ZR7nS5FLz@dpg-d6ub6lfafjfc7380et2g-a/apostas_db_br3e")
 BANCA_INICIAL = 5000
 
-CASAS = ["Bet365","Betano","SportingBet","Novibet","Vaidebet","Betfast","BETesporte",
-         "Betnacional","BetFair","Stake","Lottu","Esportes Da Sorte","Esportivabet","Outra"]
+CASAS = ["Bet365","Betano","SportingBet/Betboo","Novibet","Vaidebet/Betpix365","Betfast","BETesporte",
+         "Betnacional","BetFair","Stake","Lottu","Esportes Da Sorte","Esportivabet",
+         "Goldebet/Lotogreen","Outra"]
+
+# Mapeamento para normalizar casas antigas/variantes para o nome atual
+MAPA_CASAS_GEMEAS = {
+    "sportingbet":    "SportingBet/Betboo",
+    "Sportingbet":    "SportingBet/Betboo",
+    "SportingBet":    "SportingBet/Betboo",
+    "betboo":         "SportingBet/Betboo",
+    "Betboo":         "SportingBet/Betboo",
+    "vaidebet":       "Vaidebet/Betpix365",
+    "Vaidebet":       "Vaidebet/Betpix365",
+    "betpix365":      "Vaidebet/Betpix365",
+    "Betpix365":      "Vaidebet/Betpix365",
+    "goldebet":       "Goldebet/Lotogreen",
+    "Goldebet":       "Goldebet/Lotogreen",
+    "lotogreen":      "Goldebet/Lotogreen",
+    "Lotogreen":      "Goldebet/Lotogreen",
+}
 
 ESPORTES = ["⚽ Futebol","🏀 Basquete","🎾 Tênis","🏒 Hóquei",
             "🏈 Futebol Americano","⚾ Beisebol","🥊 MMA/Boxe","🏐 Vôlei",
@@ -140,7 +159,25 @@ def get_unidade_atual():
             row = cur.fetchone()
     return float(row[0]) if row else 50.0
 
-def set_unidade_atual(valor: float):
+def migrar_casas_gemeas():
+    """Atualiza no banco todas as apostas com casas antigas para os nomes com gêmeas."""
+    with conectar() as conn:
+        with conn.cursor() as cur:
+            atualizadas = 0
+            for nome_antigo, nome_novo in MAPA_CASAS_GEMEAS.items():
+                cur.execute("UPDATE apostas SET casa=%s WHERE LOWER(casa)=LOWER(%s)", (nome_novo, nome_antigo))
+                atualizadas += cur.rowcount
+        conn.commit()
+    return atualizadas
+
+async def cmd_migrar_casas(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    n = migrar_casas_gemeas()
+    await update.message.reply_text(
+        f"✅ *Migração concluída!*\n{n} aposta(s) atualizadas com os nomes novos das casas gêmeas.",
+        parse_mode="Markdown", reply_markup=teclado_menu()
+    )
+
+
     with conectar() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -151,7 +188,9 @@ def set_unidade_atual(valor: float):
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 def normalizar_casa(s):
-    return (s or "").strip().title() or "Sem casa"
+    s = (s or "").strip()
+    if not s: return "Sem casa"
+    return MAPA_CASAS_GEMEAS.get(s, s.title() if s not in CASAS else s)
 
 MAPA_ESPORTE = {
     # Futebol
@@ -268,8 +307,6 @@ async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return await resultados_por_mes(update, ctx)
         if txt == "🏅 Por Esporte":
             return await resultados_por_esporte(update, ctx)
-        if txt == "📈 Resultados":
-            return await resultados(update, ctx)
         if await resultados_dia(update, ctx, txt):
             return
         ctx.user_data.clear()
@@ -1596,9 +1633,11 @@ def main():
     inicializar_db()
     app = Application.builder().token(TOKEN).build()
 
+    BOTOES_MENU = ["📝 Nova aposta","⏳ Ver pendentes","📈 Resultados","✏️ Editar aposta","📊 Gerar Resultados","⚙️ Mudar Unidade"]
     fallbacks_padrao = [
         CommandHandler("cancelar", cancelar),
         MessageHandler(filters.Regex(f"^{CANCELAR_BTN}$"), cancelar),
+        MessageHandler(filters.Regex("^(" + "|".join(re.escape(b) for b in BOTOES_MENU) + ")$"), cancelar),
     ]
 
     conv_nova = ConversationHandler(
@@ -1636,6 +1675,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("exportar", exportar_csv))
+    app.add_handler(CommandHandler("migrar_casas", cmd_migrar_casas))
     app.add_handler(conv_nova)
     app.add_handler(conv_editar)
     app.add_handler(conv_unidade)
