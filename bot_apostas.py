@@ -178,6 +178,7 @@ async def cmd_migrar_casas(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+def set_unidade_atual(valor):
     with conectar() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -541,9 +542,10 @@ async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     unidade_atual = get_unidade_atual()
     lucro_unidades = lucro_total / unidade_atual if unidade_atual else 0
 
-    # Lucro da semana atual (segunda a domingo)
+    # Lucro da semana atual (domingo a sabado)
     agora = datetime.now()
-    inicio_semana = agora - timedelta(days=agora.weekday())
+    dias_desde_domingo = (agora.weekday() + 1) % 7
+    inicio_semana = agora - timedelta(days=dias_desde_domingo)
     inicio_semana = inicio_semana.replace(hour=0, minute=0, second=0, microsecond=0)
     res_semana = [a for a in res if
                   (a["data"] if hasattr(a["data"],"strftime") else datetime.strptime(str(a["data"])[:10],"%Y-%m-%d"))
@@ -1478,34 +1480,36 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         we.row_dimensions[er].height=18
     for i,w in enumerate([18,10,10,10,14,14,14,10,12],1): we.column_dimensions[get_column_letter(i)].width=w
 
-    # ── ABA 5: POR SEMANA ──
-    def semana_num(dt):
-        if hasattr(dt,"strftime"): d=dt
-        else: d=__import__("datetime").datetime.strptime(str(dt)[:10],"%Y-%m-%d")
-        return d.isocalendar()[0], d.isocalendar()[1]
+    # ── ABA 5: POR SEMANA (domingo a sabado) ──
+    import datetime as dt_mod
+    def domingo_da_semana(dt):
+        """Retorna o domingo que inicia a semana (dom-sab) de uma data."""
+        if not hasattr(dt,"strftime"):
+            dt=dt_mod.datetime.strptime(str(dt)[:10],"%Y-%m-%d")
+        # weekday(): seg=0...dom=6; dias desde domingo = (weekday+1)%7
+        dias=( dt.weekday()+1 ) % 7
+        return (dt - timedelta(days=dias)).replace(hour=0,minute=0,second=0,microsecond=0)
     por_sem=defaultdict(list)
     for a in df_res:
-        ano,num=semana_num(a["data"])
-        por_sem[(ano,num)].append(a)
+        dom=domingo_da_semana(a["data"])
+        por_sem[dom].append(a)
     ws2=wb.create_sheet("Por Semana")
     ws2.merge_cells("A1:I1"); ws2["A1"]="POR SEMANA"
     est(ws2["A1"],bold=True,bg=DARK,size=14); ws2.row_dimensions[1].height=34; ws2.row_dimensions[2].height=8
     for c,h in enumerate(["Semana","Periodo","Apostas","Ganhou","Perdeu","Stake","Lucro R$","Lucro Units","ROI"],1):
         cell=ws2.cell(row=3,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
     ws2.row_dimensions[3].height=22
-    for i,((ano,num),ap) in enumerate(sorted(por_sem.items())):
+    for i,(dom,ap) in enumerate(sorted(por_sem.items())):
         er=4+i; rb=WHITE if i%2==0 else ALT
         lucro_s=sum(lucro_aposta(a) for a in ap)
         stake_s=sum(float(a["stake"]) for a in ap)
         g_s=sum(1 for a in ap if a["resultado"]=="ganhou")
         roi_s=lucro_s/stake_s if stake_s else 0
         lucro_u_s=sum(lucro_aposta(a)/float(a.get("unidade") or 50) for a in ap)
-        import datetime as dt_mod
-        jan1=dt_mod.datetime(ano,1,1); iso1=jan1.isocalendar()
-        primeira_seg=jan1-timedelta(days=iso1[2]-1)
-        seg=primeira_seg+timedelta(weeks=num-1); sab=seg+timedelta(days=6)
-        periodo=f"{seg.strftime('%d/%m')} - {sab.strftime('%d/%m/%Y')}"
-        for col,val in enumerate([f"Semana {num}",periodo,len(ap),g_s,len(ap)-g_s,stake_s,lucro_s,round(lucro_u_s,2),roi_s],1):
+        sab=dom+timedelta(days=6)
+        num_semana=dom.isocalendar()[1]
+        periodo=f"{dom.strftime('%d/%m')} - {sab.strftime('%d/%m/%Y')}"
+        for col,val in enumerate([f"Semana {num_semana}",periodo,len(ap),g_s,len(ap)-g_s,stake_s,lucro_s,round(lucro_u_s,2),roi_s],1):
             cell=ws2.cell(row=er,column=col,value=val); fc="000000"
             if col in (7,8,9): fc=cor(val)
             cell.font=Font(name="Arial",size=10,color=fc)
