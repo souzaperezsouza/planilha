@@ -268,6 +268,8 @@ async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return await resultados_por_mes(update, ctx)
         if txt == "🏅 Por Esporte":
             return await resultados_por_esporte(update, ctx)
+        if txt == "📈 Resultados":
+            return await resultados(update, ctx)
         if await resultados_dia(update, ctx, txt):
             return
         ctx.user_data.clear()
