@@ -5,7 +5,7 @@ import threading
 import psycopg2
 import psycopg2.extras
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from datetime import datetime
+from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InputFile
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
@@ -501,6 +501,18 @@ async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     stake_curso  = sum(float(a["stake"]) for a in pendentes_ap)
     unidade_atual = get_unidade_atual()
     lucro_unidades = lucro_total / unidade_atual if unidade_atual else 0
+
+    # Lucro da semana atual (segunda a domingo)
+    agora = datetime.now()
+    inicio_semana = agora - timedelta(days=agora.weekday())
+    inicio_semana = inicio_semana.replace(hour=0, minute=0, second=0, microsecond=0)
+    res_semana = [a for a in res if
+                  (a["data"] if hasattr(a["data"],"strftime") else datetime.strptime(str(a["data"])[:10],"%Y-%m-%d"))
+                  >= inicio_semana]
+    lucro_semana = sum(lucro_aposta(a) for a in res_semana)
+    sinal_s = "+" if lucro_semana >= 0 else ""
+    emoji_s = "🟢" if lucro_semana >= 0 else "🔴"
+
     await update.message.reply_text(
         f"{emoji} *Resultados Gerais*\n\n"
         f"💰 Lucro Total: *{sinal}R$ {lucro_total:.2f}*\n"
@@ -508,11 +520,10 @@ async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"📊 ROI: *{roi:+.1%}*\n"
         f"💹 Progressão: *{progressao:+.2%}*\n"
         f"🏆 {vitorias}V / {len(res)-vitorias}D\n"
-        f"⏳ Stake em curso: *R$ {stake_curso:.2f}* ({len(pendentes_ap)} apostas)\n\n"
-        f"📅 Digite uma data (DD/MM) para ver aquele dia\n"
-        f"📅 *Por Mês* para ver o resumo mensal\n"
-        f"🏦 *Por Casa* | 🏅 *Por Esporte* para ver por categoria\n"
-        f"🔙 *Voltar* para sair",
+        f"⏳ Stake em curso: *R$ {stake_curso:.2f}* ({len(pendentes_ap)} apostas)\n"
+        f"{emoji_s} Semana atual: *{sinal_s}R$ {lucro_semana:.2f}* ({len(res_semana)} ap)\n\n"
+        f"Digite uma data (0 = hoje, 20, 20/05, 20/05/2026)\n"
+        f"Ou um ano (ex: 2026) para ver o resumo anual",
         reply_markup=teclado_resultados(), parse_mode="Markdown"
     )
 
@@ -601,17 +612,44 @@ async def resultados_por_esporte(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text("\n".join(linhas), reply_markup=teclado_resultados(), parse_mode="Markdown")
 
 async def resultados_dia(update: Update, ctx: ContextTypes.DEFAULT_TYPE, raw: str) -> bool:
+    agora = datetime.now()
+    raw   = raw.strip()
+
+    # Busca por ano: 4 dígitos ex: 2026
+    if raw.isdigit() and len(raw) == 4:
+        ano = int(raw)
+        if 2000 <= ano <= 2099:
+            apostas  = carregar()
+            do_ano   = [a for a in apostas if str(a["data"])[:4] == str(ano) and (a["resultado"] in ("ganhou","perdeu") or eh_cashout(a))]
+            if not do_ano:
+                await update.message.reply_text(f"Nenhuma aposta resolvida em {ano}.", reply_markup=teclado_resultados())
+                return True
+            lucro_a  = sum(lucro_aposta(a) for a in do_ano)
+            stake_a  = sum(float(a["stake"]) for a in do_ano)
+            g = sum(1 for a in do_ano if a["resultado"] == "ganhou")
+            roi = lucro_a / stake_a if stake_a else 0
+            emoji = "🟢" if lucro_a >= 0 else "🔴"
+            sinal = "+" if lucro_a >= 0 else ""
+            await update.message.reply_text(
+                f"{emoji} *{ano}* — {len(do_ano)} apostas | {g}V/{len(do_ano)-g}D\n"
+                f"💰 {sinal}R$ {lucro_a:.2f} | ROI: {roi:+.1%}",
+                reply_markup=teclado_resultados(), parse_mode="Markdown"
+            )
+            return True
+
+    # Resolve data usando a mesma lógica do cadastro
     data_obj = None
-    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%d/%m"):
-        try:
-            if fmt == "%d/%m":
-                data_obj = datetime.strptime(f"{raw}/{datetime.now().year}", "%d/%m/%Y")
-            else:
-                data_obj = datetime.strptime(raw, fmt)
-            break
-        except ValueError: pass
+    # 0 = hoje
+    if raw == "0":
+        data_obj = agora
+    else:
+        data_str_norm = normalizar_data(raw)
+        if data_str_norm:
+            data_obj = datetime.strptime(data_str_norm, "%Y-%m-%d")
+
     if not data_obj:
         return False
+
     data_str = data_obj.strftime("%Y-%m-%d")
     apostas  = carregar()
     do_dia   = [a for a in apostas if str(a["data"])[:10] == data_str and (a["resultado"] in ("ganhou","perdeu") or eh_cashout(a))]
