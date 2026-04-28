@@ -19,7 +19,7 @@ BANCA_INICIAL = 5000
 
 CASAS = ["Bet365","Betano","SportingBet/Betboo","Novibet","Vaidebet/Betpix365","Betfast","BETesporte",
          "Betnacional","BetFair","Stake","Lottu","Esportes Da Sorte","Esportivabet",
-         "Goldebet/Lotogreen","Outra"]
+         "Goldebet/Lotogreen","Jogo de Ouro","Outra"]
 
 # Mapeamento para normalizar casas antigas/variantes para o nome atual
 MAPA_CASAS_GEMEAS = {
@@ -36,6 +36,13 @@ MAPA_CASAS_GEMEAS = {
     "Goldebet":       "Goldebet/Lotogreen",
     "lotogreen":      "Goldebet/Lotogreen",
     "Lotogreen":      "Goldebet/Lotogreen",
+    # Jogo de Ouro — variantes digitadas errado
+    "jogodeouro":     "Jogo de Ouro",
+    "Jogodeouro":     "Jogo de Ouro",
+    "jogo de ouro":   "Jogo de Ouro",
+    "Jogo De Ouro":   "Jogo de Ouro",
+    "jogoDeOuro":     "Jogo de Ouro",
+    "jogo_de_ouro":   "Jogo de Ouro",
 }
 
 ESPORTES = ["⚽ Futebol","🏀 Basquete","🎾 Tênis","🏒 Hóquei",
@@ -113,6 +120,8 @@ def inicializar_db():
                 ON CONFLICT (chave) DO NOTHING
             """)
         conn.commit()
+    # Normaliza casas com nomes antigos/errados automaticamente a cada deploy
+    migrar_casas_gemeas()
 
 def carregar():
     with conectar() as conn:
@@ -499,6 +508,12 @@ async def ver_pendentes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(linhas), parse_mode="Markdown")
 
 # ── RESULTADOS ────────────────────────────────────────────────────────────────
+NOMES_MES_PT = {
+    "janeiro":1,"jan":1,"fevereiro":2,"fev":2,"março":3,"mar":3,"abril":4,"abr":4,
+    "maio":5,"mai":5,"junho":6,"jun":6,"julho":7,"jul":7,"agosto":8,"ago":8,
+    "setembro":9,"set":9,"outubro":10,"out":10,"novembro":11,"nov":11,"dezembro":12,"dez":12,
+}
+
 async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     apostas = carregar()
     res     = [a for a in apostas if a["resultado"] in ("ganhou","perdeu") or eh_cashout(a)]
@@ -517,29 +532,42 @@ async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     unidade_atual = get_unidade_atual()
     lucro_unidades = lucro_total / unidade_atual if unidade_atual else 0
 
-    # Lucro da semana atual (domingo a sabado)
     agora = datetime.now()
+    hoje_date = agora.date()
+
+    # Mês atual
+    res_mes = [a for a in res if
+               (a["data"] if isinstance(a["data"], type(hoje_date)) else
+                datetime.strptime(str(a["data"])[:10], "%Y-%m-%d").date()
+               ).replace(day=1) == hoje_date.replace(day=1)]
+    lucro_mes = sum(lucro_aposta(a) for a in res_mes)
+    lucro_mes_u = lucro_mes / unidade_atual if unidade_atual else 0
+    sinal_m = "+" if lucro_mes >= 0 else ""
+    emoji_m = "🟢" if lucro_mes >= 0 else "🔴"
+
+    # Semana atual (domingo a sábado)
     dias_desde_domingo = (agora.weekday() + 1) % 7
-    inicio_semana = agora - timedelta(days=dias_desde_domingo)
-    inicio_semana = inicio_semana.replace(hour=0, minute=0, second=0, microsecond=0)
+    inicio_semana_date = (agora - timedelta(days=dias_desde_domingo)).date()
     res_semana = [a for a in res if
-                  (a["data"] if hasattr(a["data"],"strftime") else datetime.strptime(str(a["data"])[:10],"%Y-%m-%d").date())
-                  >= inicio_semana.date()]
-    lucro_semana = sum(lucro_aposta(a) for a in res_semana)
+                  (a["data"] if isinstance(a["data"], type(hoje_date)) else
+                   datetime.strptime(str(a["data"])[:10], "%Y-%m-%d").date()
+                  ) >= inicio_semana_date]
+    lucro_semana   = sum(lucro_aposta(a) for a in res_semana)
+    lucro_semana_u = lucro_semana / unidade_atual if unidade_atual else 0
     sinal_s = "+" if lucro_semana >= 0 else ""
     emoji_s = "🟢" if lucro_semana >= 0 else "🔴"
 
+    NOMES_MES_LABEL = ["","Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
+    nome_mes_atual  = NOMES_MES_LABEL[agora.month]
+
     await update.message.reply_text(
         f"{emoji} *Resultados Gerais*\n\n"
-        f"💰 Lucro Total: *{sinal}R$ {lucro_total:.2f}*\n"
-        f"📏 Em unidades: *{lucro_unidades:+.2f}u* (1u = R$ {unidade_atual:.0f})\n"
-        f"📊 ROI: *{roi:+.1%}*\n"
-        f"💹 Progressão: *{progressao:+.2%}*\n"
+        f"💰 Lucro Total: *{sinal}R$ {lucro_total:.2f}* ({lucro_unidades:+.2f}u)\n"
+        f"📊 ROI: *{roi:+.1%}* | Progressão: *{progressao:+.2%}*\n"
         f"🏆 {vitorias}V / {len(res)-vitorias}D\n"
-        f"⏳ Stake em curso: *R$ {stake_curso:.2f}* ({len(pendentes_ap)} apostas)\n"
-        f"{emoji_s} Semana atual: *{sinal_s}R$ {lucro_semana:.2f}* ({len(res_semana)} ap)\n\n"
-        f"Digite uma data (0 = hoje, 20, 20/05, 20/05/2026)\n"
-        f"Ou um ano (ex: 2026) para ver o resumo anual",
+        f"⏳ Stake em curso: *R$ {stake_curso:.2f}* ({len(pendentes_ap)} ap)\n\n"
+        f"{emoji_m} {nome_mes_atual}: *{sinal_m}R$ {lucro_mes:.2f}* ({lucro_mes_u:+.2f}u) | {len(res_mes)} ap\n"
+        f"{emoji_s} Semana: *{sinal_s}R$ {lucro_semana:.2f}* ({lucro_semana_u:+.2f}u) | {len(res_semana)} ap",
         reply_markup=teclado_resultados(), parse_mode="Markdown"
     )
     return RESULTADOS_MENU
@@ -603,6 +631,43 @@ async def resultados_por_mes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     linhas.append(f"📊 *Acumulado: {sinal_ac}R$ {acum:.2f}*")
     linhas.append("\nDigite uma data (DD/MM), 🏦 *Por Casa* ou 🔙 *Voltar*:")
     await update.message.reply_text("\n".join(linhas), reply_markup=teclado_resultados(), parse_mode="Markdown")
+
+async def resultados_por_mes_especifico(update: Update, ctx: ContextTypes.DEFAULT_TYPE, mes: int, ano: int = None):
+    """Mostra resultado de um mês específico (ex: 'Janeiro', 'Abr/2025')."""
+    apostas = carregar()
+    res     = [a for a in apostas if a["resultado"] in ("ganhou","perdeu") or eh_cashout(a)]
+    agora   = datetime.now()
+    NOMES_MES = ["","Janeiro","Fevereiro","Março","Abril","Maio","Junho",
+                 "Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
+    # Se não especificou ano: tenta ano atual; se vazio, tenta ano anterior
+    anos_busca = [agora.year] if ano else [agora.year, agora.year - 1]
+    if ano:
+        anos_busca = [ano]
+    for ano_b in anos_busca:
+        do_mes = [a for a in res if
+                  str(a["data"])[:7] == f"{ano_b}-{mes:02d}"]
+        if do_mes:
+            unidade_atual = get_unidade_atual()
+            lucro_m   = sum(lucro_aposta(a) for a in do_mes)
+            stake_m   = sum(float(a["stake"]) for a in do_mes)
+            g_m       = sum(1 for a in do_mes if a["resultado"] == "ganhou")
+            roi_m     = lucro_m / stake_m if stake_m else 0
+            lucro_u_m = sum(lucro_aposta(a) / float(a.get("unidade") or 50) for a in do_mes)
+            emoji_m   = "🟢" if lucro_m >= 0 else "🔴"
+            sinal_m   = "+" if lucro_m >= 0 else ""
+            await update.message.reply_text(
+                f"{emoji_m} *{NOMES_MES[mes]}/{ano_b}*\n\n"
+                f"💰 Lucro: *{sinal_m}R$ {lucro_m:.2f}* ({lucro_u_m:+.2f}u)\n"
+                f"📊 ROI: *{roi_m:+.1%}*\n"
+                f"🏆 {g_m}V / {len(do_mes)-g_m}D | {len(do_mes)} apostas",
+                reply_markup=teclado_resultados(), parse_mode="Markdown"
+            )
+            return
+    label_ano = f"/{ano}" if ano else ""
+    await update.message.reply_text(
+        f"Nenhuma aposta resolvida em {NOMES_MES[mes]}{label_ano}.",
+        reply_markup=teclado_resultados()
+    )
 
 async def resultados_por_esporte(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     apostas = carregar()
@@ -711,9 +776,28 @@ async def resultados_resposta(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if txt == "🏅 Por Esporte":
         await resultados_por_esporte(update, ctx)
         return RESULTADOS_MENU
+    # Filtro por nome de mês: "Janeiro", "jan", "Abril/2026", etc.
+    txt_lower = txt.strip().lower()
+    # Detecta "mes/ano" ou "mes ano" ou só "mes"
+    ano_filtro = None
+    nome_teste = txt_lower
+    for sep in ("/", " ", "-"):
+        if sep in txt_lower:
+            partes = txt_lower.split(sep, 1)
+            if partes[1].isdigit() and len(partes[1]) == 4:
+                nome_teste = partes[0].strip()
+                ano_filtro = int(partes[1])
+                break
+    mes_num = NOMES_MES_PT.get(nome_teste)
+    if mes_num:
+        await resultados_por_mes_especifico(update, ctx, mes_num, ano_filtro)
+        return RESULTADOS_MENU
     if await resultados_dia(update, ctx, txt):
         return RESULTADOS_MENU
-    await update.message.reply_text("❓ Opção não reconhecida. Digite uma data ou use os botões.", reply_markup=teclado_resultados())
+    await update.message.reply_text(
+        "❓ Não reconheci. Use os botões, digite uma data (20/05), ano (2026) ou mês (Janeiro, Abr, Fev/2025).",
+        reply_markup=teclado_resultados()
+    )
     return RESULTADOS_MENU
 CAMPOS_EDITAVEIS = ["data","horario","descricao","odd","stake","esporte","casa","resultado","cashout","freebet","deletar"]
 CAMPOS_LABEL     = {
@@ -972,10 +1056,11 @@ async def gerar_resposta(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return await voltar_menu(update, ctx)
     if txt == "📊 Gerar Dashboard":
         await gerar_dashboard(update, ctx)
-        return ConversationHandler.END
+        await update.message.reply_text("O que mais?", reply_markup=teclado_gerar())
+        return GERAR_MENU
     if txt == "📂 Gerar Dados":
         await gerar_xlsx_dados(update, ctx)
-        return ConversationHandler.END
+        return GERAR_MENU
     await update.message.reply_text("❓ Use os botões abaixo.", reply_markup=teclado_gerar())
     return GERAR_MENU
 
@@ -1082,7 +1167,6 @@ if __name__ == "__main__":
             document=InputFile(io.BytesIO(script_bytes), filename="migrar_db.py"),
             caption=instrucoes,
             parse_mode="Markdown",
-            reply_markup=teclado_gerar()
         )
     except Exception as e:
         await update.message.reply_text(f"❌ Erro:\n`{str(e)}`", parse_mode="Markdown")
@@ -1094,7 +1178,7 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await _gerar_dashboard_interno(update, ctx)
     except Exception as _e:
         import traceback as _tb
-        _trace = _tb.format_exc()[-600:]
+        _trace = _tb.format_exc()[-700:]
         await update.message.reply_text(
             f"❌ Erro ao gerar dashboard:\n`{str(_e)}`\n\n`{_trace}`",
             parse_mode="Markdown", reply_markup=teclado_gerar()
@@ -1501,11 +1585,14 @@ async def _gerar_dashboard_interno(update: Update, ctx: ContextTypes.DEFAULT_TYP
     import datetime as dt_mod
     def domingo_da_semana(dt):
         """Retorna o domingo que inicia a semana (dom-sab) de uma data."""
-        if not hasattr(dt,"strftime"):
-            dt=dt_mod.datetime.strptime(str(dt)[:10],"%Y-%m-%d")
-        # weekday(): seg=0...dom=6; dias desde domingo = (weekday+1)%7
-        dias=( dt.weekday()+1 ) % 7
-        return (dt - timedelta(days=dias)).replace(hour=0,minute=0,second=0,microsecond=0)
+        # Garante que seja datetime (date.replace não aceita hour/minute/second)
+        if not isinstance(dt, dt_mod.datetime):
+            if isinstance(dt, dt_mod.date):
+                dt = dt_mod.datetime(dt.year, dt.month, dt.day)
+            else:
+                dt = dt_mod.datetime.strptime(str(dt)[:10], "%Y-%m-%d")
+        dias = (dt.weekday() + 1) % 7
+        return (dt - timedelta(days=dias)).replace(hour=0, minute=0, second=0, microsecond=0)
     por_sem=defaultdict(list)
     for a in df_res:
         dom=domingo_da_semana(a["data"])
