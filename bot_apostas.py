@@ -1,6 +1,5 @@
 import os
 import io
-import re
 import logging
 import threading
 import psycopg2
@@ -17,26 +16,8 @@ TOKEN         = "8790751046:AAG-AsvU3V-K5j4U8IOUQrpT6NXX8K3FcjU"
 DATABASE_URL  = os.environ.get("DATABASE_URL", "postgresql://apostas_db_br3e_user:9Q8kF2084mtEmOESc09jc22ZR7nS5FLz@dpg-d6ub6lfafjfc7380et2g-a/apostas_db_br3e")
 BANCA_INICIAL = 5000
 
-CASAS = ["Bet365","Betano","SportingBet/Betboo","Novibet","Vaidebet/Betpix365","Betfast","BETesporte",
-         "Betnacional","BetFair","Stake","Lottu","Esportes Da Sorte","Esportivabet",
-         "Goldebet/Lotogreen","Outra"]
-
-# Mapeamento para normalizar casas antigas/variantes para o nome atual
-MAPA_CASAS_GEMEAS = {
-    "sportingbet":    "SportingBet/Betboo",
-    "Sportingbet":    "SportingBet/Betboo",
-    "SportingBet":    "SportingBet/Betboo",
-    "betboo":         "SportingBet/Betboo",
-    "Betboo":         "SportingBet/Betboo",
-    "vaidebet":       "Vaidebet/Betpix365",
-    "Vaidebet":       "Vaidebet/Betpix365",
-    "betpix365":      "Vaidebet/Betpix365",
-    "Betpix365":      "Vaidebet/Betpix365",
-    "goldebet":       "Goldebet/Lotogreen",
-    "Goldebet":       "Goldebet/Lotogreen",
-    "lotogreen":      "Goldebet/Lotogreen",
-    "Lotogreen":      "Goldebet/Lotogreen",
-}
+CASAS = ["Bet365","Betano","SportingBet","Novibet","Vaidebet","Betfast","BETesporte",
+         "Betnacional","BetFair","Stake","Lottu","Esportes Da Sorte","Esportivabet","Outra"]
 
 ESPORTES = ["⚽ Futebol","🏀 Basquete","🎾 Tênis","🏒 Hóquei",
             "🏈 Futebol Americano","⚾ Beisebol","🥊 MMA/Boxe","🏐 Vôlei",
@@ -49,8 +30,6 @@ DATA, HORARIO, DESCRICAO, ODD, STAKE, ESPORTE, CASA = range(7)
 ATUALIZAR_ID, ATUALIZAR_RES                         = range(7, 9)
 EDITAR_ID, EDITAR_CAMPO, EDITAR_VALOR, EDITAR_CASA  = range(9, 13)
 MUDAR_UNIDADE_VALOR                                 = 13
-RESULTADOS_MENU                                     = 14
-GERAR_MENU                                          = 15
 
 CANCELAR_BTN = "❌ Cancelar"
 
@@ -161,26 +140,7 @@ def get_unidade_atual():
             row = cur.fetchone()
     return float(row[0]) if row else 50.0
 
-def migrar_casas_gemeas():
-    """Atualiza no banco todas as apostas com casas antigas para os nomes com gêmeas."""
-    with conectar() as conn:
-        with conn.cursor() as cur:
-            atualizadas = 0
-            for nome_antigo, nome_novo in MAPA_CASAS_GEMEAS.items():
-                cur.execute("UPDATE apostas SET casa=%s WHERE LOWER(casa)=LOWER(%s)", (nome_novo, nome_antigo))
-                atualizadas += cur.rowcount
-        conn.commit()
-    return atualizadas
-
-async def cmd_migrar_casas(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    n = migrar_casas_gemeas()
-    await update.message.reply_text(
-        f"✅ *Migração concluída!*\n{n} aposta(s) atualizadas com os nomes novos das casas gêmeas.",
-        parse_mode="Markdown", reply_markup=teclado_menu()
-    )
-
-
-def set_unidade_atual(valor):
+def set_unidade_atual(valor: float):
     with conectar() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -191,9 +151,7 @@ def set_unidade_atual(valor):
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 def normalizar_casa(s):
-    s = (s or "").strip()
-    if not s: return "Sem casa"
-    return MAPA_CASAS_GEMEAS.get(s, s.title() if s not in CASAS else s)
+    return (s or "").strip().title() or "Sem casa"
 
 MAPA_ESPORTE = {
     # Futebol
@@ -301,7 +259,35 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     txt = update.message.text
 
+    if ctx.user_data.get("modo") == "resultados":
+        if txt == "🔙 Voltar":
+            return await voltar_menu(update, ctx)
+        if txt == "🏦 Por Casa":
+            return await resultados_por_casa(update, ctx)
+        if txt == "📅 Por Mês":
+            return await resultados_por_mes(update, ctx)
+        if txt == "🏅 Por Esporte":
+            return await resultados_por_esporte(update, ctx)
+        if txt == "📈 Resultados":
+            return await resultados(update, ctx)
+        if await resultados_dia(update, ctx, txt):
+            return
+        ctx.user_data.clear()
+
+    if ctx.user_data.get("modo") == "gerar":
+        if txt == "🔙 Voltar":
+            return await voltar_menu(update, ctx)
+        if txt == "📊 Gerar Dashboard":
+            return await gerar_dashboard(update, ctx)
+        if txt == "📂 Gerar Dados":
+            return await gerar_xlsx_dados(update, ctx)
+        ctx.user_data.clear()
+
+    if txt == "📝 Nova aposta":      return await nova_aposta_inicio(update, ctx)
     if txt == "⏳ Ver pendentes":    return await ver_pendentes(update, ctx)
+    if txt == "📈 Resultados":       return await resultados(update, ctx)
+    if txt == "✏️ Editar aposta":    return await editar_inicio(update, ctx)
+    if txt == "📊 Gerar Resultados": return await gerar_menu(update, ctx)
     if txt == "⚙️ Mudar Unidade":    return await mudar_unidade_inicio(update, ctx)
 
 # ── NOVA APOSTA ───────────────────────────────────────────────────────────────
@@ -500,6 +486,7 @@ async def ver_pendentes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ── RESULTADOS ────────────────────────────────────────────────────────────────
 async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ctx.user_data["modo"] = "resultados"
     apostas = carregar()
     res     = [a for a in apostas if a["resultado"] in ("ganhou","perdeu") or eh_cashout(a)]
     if not res:
@@ -517,10 +504,9 @@ async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     unidade_atual = get_unidade_atual()
     lucro_unidades = lucro_total / unidade_atual if unidade_atual else 0
 
-    # Lucro da semana atual (domingo a sabado)
+    # Lucro da semana atual (segunda a domingo)
     agora = datetime.now()
-    dias_desde_domingo = (agora.weekday() + 1) % 7
-    inicio_semana = agora - timedelta(days=dias_desde_domingo)
+    inicio_semana = agora - timedelta(days=agora.weekday())
     inicio_semana = inicio_semana.replace(hour=0, minute=0, second=0, microsecond=0)
     res_semana = [a for a in res if
                   (a["data"] if hasattr(a["data"],"strftime") else datetime.strptime(str(a["data"])[:10],"%Y-%m-%d"))
@@ -542,7 +528,6 @@ async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"Ou um ano (ex: 2026) para ver o resumo anual",
         reply_markup=teclado_resultados(), parse_mode="Markdown"
     )
-    return RESULTADOS_MENU
 
 async def resultados_por_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     apostas = carregar()
@@ -697,24 +682,7 @@ async def resultados_dia(update: Update, ctx: ContextTypes.DEFAULT_TYPE, raw: st
     await update.message.reply_text("\n".join(linhas), reply_markup=teclado_resultados(), parse_mode="Markdown")
     return True
 
-async def resultados_resposta(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Handler das respostas dentro do ConversationHandler de resultados."""
-    txt = update.message.text
-    if txt == "🔙 Voltar":
-        return await voltar_menu(update, ctx)
-    if txt == "🏦 Por Casa":
-        await resultados_por_casa(update, ctx)
-        return RESULTADOS_MENU
-    if txt == "📅 Por Mês":
-        await resultados_por_mes(update, ctx)
-        return RESULTADOS_MENU
-    if txt == "🏅 Por Esporte":
-        await resultados_por_esporte(update, ctx)
-        return RESULTADOS_MENU
-    if await resultados_dia(update, ctx, txt):
-        return RESULTADOS_MENU
-    await update.message.reply_text("❓ Opção não reconhecida. Digite uma data ou use os botões.", reply_markup=teclado_resultados())
-    return RESULTADOS_MENU
+# ── EDITAR APOSTA ─────────────────────────────────────────────────────────────
 CAMPOS_EDITAVEIS = ["data","horario","descricao","odd","stake","esporte","casa","resultado","cashout","freebet","deletar"]
 CAMPOS_LABEL     = {
     "data":"📅 Data","horario":"⏰ Horário","descricao":"🏷 Descrição",
@@ -957,27 +925,13 @@ async def mudar_unidade_receber(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ── GERAR MENU ────────────────────────────────────────────────────────────────
 async def gerar_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ctx.user_data["modo"] = "gerar"
     await update.message.reply_text(
         "📊 *Exportar*\n\n"
         "• *Gerar Dashboard* → xlsx com estatísticas e gráficos\n"
         "• *Gerar Dados* → xlsx com dados brutos para migração de banco",
         reply_markup=teclado_gerar(), parse_mode="Markdown"
     )
-    return GERAR_MENU
-
-async def gerar_resposta(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Handler das respostas dentro do ConversationHandler de gerar."""
-    txt = update.message.text
-    if txt == "🔙 Voltar":
-        return await voltar_menu(update, ctx)
-    if txt == "📊 Gerar Dashboard":
-        await gerar_dashboard(update, ctx)
-        return ConversationHandler.END
-    if txt == "📂 Gerar Dados":
-        await gerar_xlsx_dados(update, ctx)
-        return ConversationHandler.END
-    await update.message.reply_text("❓ Use os botões abaixo.", reply_markup=teclado_gerar())
-    return GERAR_MENU
 
 async def gerar_xlsx_dados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Gera o migrar_db.py pronto para uso no próximo mês."""
@@ -1487,36 +1441,34 @@ async def gerar_dashboard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         we.row_dimensions[er].height=18
     for i,w in enumerate([18,10,10,10,14,14,14,10,12],1): we.column_dimensions[get_column_letter(i)].width=w
 
-    # ── ABA 5: POR SEMANA (domingo a sabado) ──
-    import datetime as dt_mod
-    def domingo_da_semana(dt):
-        """Retorna o domingo que inicia a semana (dom-sab) de uma data."""
-        if not hasattr(dt,"strftime"):
-            dt=dt_mod.datetime.strptime(str(dt)[:10],"%Y-%m-%d")
-        # weekday(): seg=0...dom=6; dias desde domingo = (weekday+1)%7
-        dias=( dt.weekday()+1 ) % 7
-        return (dt - timedelta(days=dias)).replace(hour=0,minute=0,second=0,microsecond=0)
+    # ── ABA 5: POR SEMANA ──
+    def semana_num(dt):
+        if hasattr(dt,"strftime"): d=dt
+        else: d=__import__("datetime").datetime.strptime(str(dt)[:10],"%Y-%m-%d")
+        return d.isocalendar()[0], d.isocalendar()[1]
     por_sem=defaultdict(list)
     for a in df_res:
-        dom=domingo_da_semana(a["data"])
-        por_sem[dom].append(a)
+        ano,num=semana_num(a["data"])
+        por_sem[(ano,num)].append(a)
     ws2=wb.create_sheet("Por Semana")
     ws2.merge_cells("A1:I1"); ws2["A1"]="POR SEMANA"
     est(ws2["A1"],bold=True,bg=DARK,size=14); ws2.row_dimensions[1].height=34; ws2.row_dimensions[2].height=8
     for c,h in enumerate(["Semana","Periodo","Apostas","Ganhou","Perdeu","Stake","Lucro R$","Lucro Units","ROI"],1):
         cell=ws2.cell(row=3,column=c,value=h); est(cell,bold=True,bg=DARK,size=10); cell.border=brd()
     ws2.row_dimensions[3].height=22
-    for i,(dom,ap) in enumerate(sorted(por_sem.items())):
+    for i,((ano,num),ap) in enumerate(sorted(por_sem.items())):
         er=4+i; rb=WHITE if i%2==0 else ALT
         lucro_s=sum(lucro_aposta(a) for a in ap)
         stake_s=sum(float(a["stake"]) for a in ap)
         g_s=sum(1 for a in ap if a["resultado"]=="ganhou")
         roi_s=lucro_s/stake_s if stake_s else 0
         lucro_u_s=sum(lucro_aposta(a)/float(a.get("unidade") or 50) for a in ap)
-        sab=dom+timedelta(days=6)
-        num_semana=dom.isocalendar()[1]
-        periodo=f"{dom.strftime('%d/%m')} - {sab.strftime('%d/%m/%Y')}"
-        for col,val in enumerate([f"Semana {num_semana}",periodo,len(ap),g_s,len(ap)-g_s,stake_s,lucro_s,round(lucro_u_s,2),roi_s],1):
+        import datetime as dt_mod
+        jan1=dt_mod.datetime(ano,1,1); iso1=jan1.isocalendar()
+        primeira_seg=jan1-timedelta(days=iso1[2]-1)
+        seg=primeira_seg+timedelta(weeks=num-1); sab=seg+timedelta(days=6)
+        periodo=f"{seg.strftime('%d/%m')} - {sab.strftime('%d/%m/%Y')}"
+        for col,val in enumerate([f"Semana {num}",periodo,len(ap),g_s,len(ap)-g_s,stake_s,lucro_s,round(lucro_u_s,2),roi_s],1):
             cell=ws2.cell(row=er,column=col,value=val); fc="000000"
             if col in (7,8,9): fc=cor(val)
             cell.font=Font(name="Arial",size=10,color=fc)
@@ -1644,11 +1596,16 @@ def main():
     inicializar_db()
     app = Application.builder().token(TOKEN).build()
 
-    BOTOES_MENU = ["📝 Nova aposta","⏳ Ver pendentes","📈 Resultados","✏️ Editar aposta","📊 Gerar Resultados","⚙️ Mudar Unidade"]
+    async def cancelar_e_redirecionar(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        ctx.user_data.clear()
+        await menu_botao(update, ctx)
+        return ConversationHandler.END
+
     fallbacks_padrao = [
         CommandHandler("cancelar", cancelar),
+        CommandHandler("start", start),
         MessageHandler(filters.Regex(f"^{CANCELAR_BTN}$"), cancelar),
-        MessageHandler(filters.Regex("^(" + "|".join(re.escape(b) for b in BOTOES_MENU) + ")$"), cancelar),
+        MessageHandler(filters.Regex("^(📝 Nova aposta|⏳ Ver pendentes|📈 Resultados|✏️ Editar aposta|📊 Gerar Resultados|⚙️ Mudar Unidade)$"), cancelar_e_redirecionar),
     ]
 
     conv_nova = ConversationHandler(
@@ -1684,30 +1641,11 @@ def main():
         fallbacks=fallbacks_padrao,
     )
 
-    conv_resultados = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^📈 Resultados$"), resultados)],
-        states={
-            RESULTADOS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, resultados_resposta)],
-        },
-        fallbacks=fallbacks_padrao,
-    )
-
-    conv_gerar = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^📊 Gerar Resultados$"), gerar_menu)],
-        states={
-            GERAR_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, gerar_resposta)],
-        },
-        fallbacks=fallbacks_padrao,
-    )
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("exportar", exportar_csv))
-    app.add_handler(CommandHandler("migrar_casas", cmd_migrar_casas))
     app.add_handler(conv_nova)
     app.add_handler(conv_editar)
     app.add_handler(conv_unidade)
-    app.add_handler(conv_resultados)
-    app.add_handler(conv_gerar)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_botao))
 
     threading.Thread(target=iniciar_servidor, daemon=True).start()
