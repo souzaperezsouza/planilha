@@ -301,11 +301,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     txt = update.message.text
 
-    if txt == "📝 Nova aposta":      return await nova_aposta_inicio(update, ctx)
     if txt == "⏳ Ver pendentes":    return await ver_pendentes(update, ctx)
-    if txt == "📈 Resultados":       return await resultados(update, ctx)
-    if txt == "✏️ Editar aposta":    return await editar_inicio(update, ctx)
-    if txt == "📊 Gerar Resultados": return await gerar_menu(update, ctx)
     if txt == "⚙️ Mudar Unidade":    return await mudar_unidade_inicio(update, ctx)
 
 # ── NOVA APOSTA ───────────────────────────────────────────────────────────────
