@@ -49,6 +49,8 @@ DATA, HORARIO, DESCRICAO, ODD, STAKE, ESPORTE, CASA = range(7)
 ATUALIZAR_ID, ATUALIZAR_RES                         = range(7, 9)
 EDITAR_ID, EDITAR_CAMPO, EDITAR_VALOR, EDITAR_CASA  = range(9, 13)
 MUDAR_UNIDADE_VALOR                                 = 13
+RESULTADOS_MENU                                     = 14
+GERAR_MENU                                          = 15
 
 CANCELAR_BTN = "❌ Cancelar"
 
@@ -299,28 +301,6 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def menu_botao(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     txt = update.message.text
 
-    if ctx.user_data.get("modo") == "resultados":
-        if txt == "🔙 Voltar":
-            return await voltar_menu(update, ctx)
-        if txt == "🏦 Por Casa":
-            return await resultados_por_casa(update, ctx)
-        if txt == "📅 Por Mês":
-            return await resultados_por_mes(update, ctx)
-        if txt == "🏅 Por Esporte":
-            return await resultados_por_esporte(update, ctx)
-        if await resultados_dia(update, ctx, txt):
-            return
-        ctx.user_data.clear()
-
-    if ctx.user_data.get("modo") == "gerar":
-        if txt == "🔙 Voltar":
-            return await voltar_menu(update, ctx)
-        if txt == "📊 Gerar Dashboard":
-            return await gerar_dashboard(update, ctx)
-        if txt == "📂 Gerar Dados":
-            return await gerar_xlsx_dados(update, ctx)
-        ctx.user_data.clear()
-
     if txt == "📝 Nova aposta":      return await nova_aposta_inicio(update, ctx)
     if txt == "⏳ Ver pendentes":    return await ver_pendentes(update, ctx)
     if txt == "📈 Resultados":       return await resultados(update, ctx)
@@ -524,7 +504,6 @@ async def ver_pendentes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ── RESULTADOS ────────────────────────────────────────────────────────────────
 async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    ctx.user_data["modo"] = "resultados"
     apostas = carregar()
     res     = [a for a in apostas if a["resultado"] in ("ganhou","perdeu") or eh_cashout(a)]
     if not res:
@@ -567,6 +546,7 @@ async def resultados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"Ou um ano (ex: 2026) para ver o resumo anual",
         reply_markup=teclado_resultados(), parse_mode="Markdown"
     )
+    return RESULTADOS_MENU
 
 async def resultados_por_casa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     apostas = carregar()
@@ -721,7 +701,24 @@ async def resultados_dia(update: Update, ctx: ContextTypes.DEFAULT_TYPE, raw: st
     await update.message.reply_text("\n".join(linhas), reply_markup=teclado_resultados(), parse_mode="Markdown")
     return True
 
-# ── EDITAR APOSTA ─────────────────────────────────────────────────────────────
+async def resultados_resposta(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Handler das respostas dentro do ConversationHandler de resultados."""
+    txt = update.message.text
+    if txt == "🔙 Voltar":
+        return await voltar_menu(update, ctx)
+    if txt == "🏦 Por Casa":
+        await resultados_por_casa(update, ctx)
+        return RESULTADOS_MENU
+    if txt == "📅 Por Mês":
+        await resultados_por_mes(update, ctx)
+        return RESULTADOS_MENU
+    if txt == "🏅 Por Esporte":
+        await resultados_por_esporte(update, ctx)
+        return RESULTADOS_MENU
+    if await resultados_dia(update, ctx, txt):
+        return RESULTADOS_MENU
+    await update.message.reply_text("❓ Opção não reconhecida. Digite uma data ou use os botões.", reply_markup=teclado_resultados())
+    return RESULTADOS_MENU
 CAMPOS_EDITAVEIS = ["data","horario","descricao","odd","stake","esporte","casa","resultado","cashout","freebet","deletar"]
 CAMPOS_LABEL     = {
     "data":"📅 Data","horario":"⏰ Horário","descricao":"🏷 Descrição",
@@ -964,13 +961,27 @@ async def mudar_unidade_receber(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ── GERAR MENU ────────────────────────────────────────────────────────────────
 async def gerar_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    ctx.user_data["modo"] = "gerar"
     await update.message.reply_text(
         "📊 *Exportar*\n\n"
         "• *Gerar Dashboard* → xlsx com estatísticas e gráficos\n"
         "• *Gerar Dados* → xlsx com dados brutos para migração de banco",
         reply_markup=teclado_gerar(), parse_mode="Markdown"
     )
+    return GERAR_MENU
+
+async def gerar_resposta(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Handler das respostas dentro do ConversationHandler de gerar."""
+    txt = update.message.text
+    if txt == "🔙 Voltar":
+        return await voltar_menu(update, ctx)
+    if txt == "📊 Gerar Dashboard":
+        await gerar_dashboard(update, ctx)
+        return ConversationHandler.END
+    if txt == "📂 Gerar Dados":
+        await gerar_xlsx_dados(update, ctx)
+        return ConversationHandler.END
+    await update.message.reply_text("❓ Use os botões abaixo.", reply_markup=teclado_gerar())
+    return GERAR_MENU
 
 async def gerar_xlsx_dados(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Gera o migrar_db.py pronto para uso no próximo mês."""
@@ -1677,12 +1688,30 @@ def main():
         fallbacks=fallbacks_padrao,
     )
 
+    conv_resultados = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^📈 Resultados$"), resultados)],
+        states={
+            RESULTADOS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, resultados_resposta)],
+        },
+        fallbacks=fallbacks_padrao,
+    )
+
+    conv_gerar = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^📊 Gerar Resultados$"), gerar_menu)],
+        states={
+            GERAR_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, gerar_resposta)],
+        },
+        fallbacks=fallbacks_padrao,
+    )
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("exportar", exportar_csv))
     app.add_handler(CommandHandler("migrar_casas", cmd_migrar_casas))
     app.add_handler(conv_nova)
     app.add_handler(conv_editar)
     app.add_handler(conv_unidade)
+    app.add_handler(conv_resultados)
+    app.add_handler(conv_gerar)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_botao))
 
     threading.Thread(target=iniciar_servidor, daemon=True).start()
