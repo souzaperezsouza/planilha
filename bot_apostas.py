@@ -19,7 +19,7 @@ BANCA_INICIAL = 5000
 
 CASAS = ["Bet365","Betano","SportingBet/Betboo","Novibet","Vaidebet/Betpix365","Betfast","BETesporte",
          "Betnacional","BetFair","Stake","Lottu","Esportes Da Sorte","Esportivabet",
-         "Goldebet/Lotogreen","Jogo de Ouro","Outra"]
+         "Outra"]
 
 # Mapeamento para normalizar casas antigas/variantes para o nome atual
 MAPA_CASAS_GEMEAS = {
@@ -32,17 +32,6 @@ MAPA_CASAS_GEMEAS = {
     "Vaidebet":       "Vaidebet/Betpix365",
     "betpix365":      "Vaidebet/Betpix365",
     "Betpix365":      "Vaidebet/Betpix365",
-    "goldebet":       "Goldebet/Lotogreen",
-    "Goldebet":       "Goldebet/Lotogreen",
-    "lotogreen":      "Goldebet/Lotogreen",
-    "Lotogreen":      "Goldebet/Lotogreen",
-    # Jogo de Ouro — variantes digitadas errado
-    "jogodeouro":     "Jogo de Ouro",
-    "Jogodeouro":     "Jogo de Ouro",
-    "jogo de ouro":   "Jogo de Ouro",
-    "Jogo De Ouro":   "Jogo de Ouro",
-    "jogoDeOuro":     "Jogo de Ouro",
-    "jogo_de_ouro":   "Jogo de Ouro",
 }
 
 ESPORTES = ["⚽ Futebol","🏀 Basquete","🎾 Tênis","🏒 Hóquei",
