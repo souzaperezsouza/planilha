@@ -28,6 +28,7 @@ MAPA_CASAS_GEMEAS = {
     "SportingBet":    "SportingBet/Betboo",
     "betboo":         "SportingBet/Betboo",
     "Betboo":         "SportingBet/Betboo",
+    #vaidebet e betpix
     "vaidebet":       "Vaidebet/Betpix365",
     "Vaidebet":       "Vaidebet/Betpix365",
     "betpix365":      "Vaidebet/Betpix365",
@@ -40,6 +41,8 @@ MAPA_CASAS_GEMEAS = {
     "Bet.bet":        "Donaldbet/Bet.bet",
     "BET.BET":        "Donaldbet/Bet.bet",
     "Betpontobet":    "Donaldbet/Bet.bet",
+    "Betponto":       "Donaldbet/Bet.bet",
+    "Donald":         "Donaldbet/Bet.bet"
 }
 
 ESPORTES = ["⚽ Futebol","🏀 Basquete","🎾 Tênis","🏒 Hóquei",
