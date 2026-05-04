@@ -39,6 +39,7 @@ MAPA_CASAS_GEMEAS = {
     "bet.bet":        "Donaldbet/Bet.bet",
     "Bet.bet":        "Donaldbet/Bet.bet",
     "BET.BET":        "Donaldbet/Bet.bet",
+    "Betpontobet":    "Donaldbet/Bet.bet",
 }
 
 ESPORTES = ["⚽ Futebol","🏀 Basquete","🎾 Tênis","🏒 Hóquei",
